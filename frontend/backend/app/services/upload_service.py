@@ -3,7 +3,7 @@ import os
 import re
 import uuid
 import logging
-import fitz
+from pypdf import PdfReader
 from app.core.config import settings
 from app.services.embedding_service import create_embeddings_batch
 
@@ -19,99 +19,47 @@ CHAPTER_PATTERNS = [
 
 
 def detect_chapters_from_pdf(file_path: str) -> list[dict]:
-    doc = fitz.open(file_path)
+    reader = PdfReader(file_path)
     chapters = []
-    font_samples = []
+    seen = set()
 
-    for page in doc:
-        blocks = page.get_text("dict")["blocks"]
-        for block in blocks:
-            if "lines" not in block:
+    for pi, page in enumerate(reader.pages):
+        text = page.extract_text()
+        if not text:
+            continue
+        for line in text.split("\n"):
+            line = line.strip()
+            if len(line) < 3 or len(line) > 200:
                 continue
-            for line in block["lines"]:
-                for span in line["spans"]:
-                    font_samples.append(span["size"])
+            for pattern in CHAPTER_PATTERNS:
+                match = pattern.match(line)
+                if match and line not in seen:
+                    seen.add(line)
+                    chapters.append({
+                        "title": line,
+                        "page_number": pi + 1,
+                    })
+                    break
 
-    median_size = 10.0
-    if font_samples:
-        font_samples.sort()
-        median_size = font_samples[len(font_samples) // 2]
+    if not chapters:
+        return [{"title": "Full Book", "page_number": 1}]
 
-    for pi, page in enumerate(doc):
-        blocks = page.get_text("dict")["blocks"]
-        page_headings = []
-        page_text = page.get_text()
-
-        for block in blocks:
-            if "lines" not in block:
-                continue
-            for line in block["lines"]:
-                line_text = "".join(s["text"] for s in line["spans"]).strip()
-                if not line_text or len(line_text) < 3 or len(line_text) > 200:
-                    continue
-
-                max_font_size = max((s["size"] for s in line["spans"]), default=0)
-                is_bold = any(s["flags"] & 2 for s in line["spans"])
-
-                is_heading = (max_font_size >= median_size * 1.15) or is_bold or (
-                    max_font_size >= median_size and
-                    len(line_text) < 80 and
-                    (line_text[0].isdigit() or line_text.isupper() or line_text[0].isupper())
-                )
-
-                if not is_heading:
-                    continue
-
-                for pattern in CHAPTER_PATTERNS:
-                    match = pattern.match(line_text)
-                    if match:
-                        page_headings.append({
-                            "title": line_text,
-                            "page_number": pi + 1,
-                            "font_size": max_font_size,
-                        })
-                        break
-
-        if page_headings:
-            best = max(page_headings, key=lambda h: h["font_size"])
-            chapters.append(best)
-
-    merged = []
-    for ch in chapters:
-        if not merged or ch["page_number"] - merged[-1]["page_number"] >= 2:
+    merged = [chapters[0]]
+    for ch in chapters[1:]:
+        if ch["page_number"] - merged[-1]["page_number"] >= 1:
             merged.append(ch)
-        elif ch["font_size"] >= merged[-1]["font_size"]:
+        elif len(ch["title"]) > len(merged[-1]["title"]):
             merged[-1] = ch
 
     if len(merged) <= 1:
-        for pi, page in enumerate(doc):
-            text = page.get_text()
-            for line in text.split("\n"):
-                line = line.strip()
-                if len(line) < 3 or len(line) > 200:
-                    continue
-                for pattern in CHAPTER_PATTERNS:
-                    match = pattern.match(line)
-                    if match:
-                        merged.append({
-                            "title": line,
-                            "page_number": pi + 1,
-                            "font_size": median_size,
-                        })
-                        break
+        return [{"title": "Full Book", "page_number": 1}]
 
-    if len(merged) <= 1:
-        merged = [
-            {"title": "Full Book", "page_number": 1, "font_size": median_size}
-        ]
-
-    doc.close()
     return merged
 
 
 def extract_text_by_chapters(file_path: str, chapters: list[dict]) -> list[dict]:
-    doc = fitz.open(file_path)
-    total_pages = doc.page_count
+    reader = PdfReader(file_path)
+    total_pages = len(reader.pages)
 
     for i, chapter in enumerate(chapters):
         start_page = chapter["page_number"] - 1
@@ -124,12 +72,15 @@ def extract_text_by_chapters(file_path: str, chapters: list[dict]) -> list[dict]
         chapter["end_page"] = max(start_page + 1, end_page)
 
         text_parts = []
-        real_end = min(end_page, total_pages)
-        for pi in range(start_page, max(start_page + 1, real_end)):
-            text_parts.append(doc[pi].get_text())
+        for pi in range(start_page, min(end_page, total_pages)):
+            try:
+                pt = reader.pages[pi].extract_text()
+                if pt:
+                    text_parts.append(pt)
+            except Exception:
+                pass
         chapter["text"] = "\n\n".join(text_parts) if text_parts else chapter.get("title", "")
 
-    doc.close()
     return chapters
 
 
@@ -164,12 +115,12 @@ async def process_book(
 ) -> dict:
     logger.info(f"Processing book: {book_title}")
 
-    doc = fitz.open(file_path)
-    total_pages = doc.page_count
-    doc.close()
-
     chapters = detect_chapters_from_pdf(file_path)
     chapters = extract_text_by_chapters(file_path, chapters)
+
+    reader = PdfReader(file_path)
+    total_pages = len(reader.pages)
+    del reader
 
     all_chunks = []
     chunk_index = 0

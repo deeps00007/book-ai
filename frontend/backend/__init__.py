@@ -1,1 +1,1 @@
-# Backend Python package
+# Backend package
