@@ -43,3 +43,5 @@ books_text.txt
 # Old prototype
 app.py
 book.pdf
+
+supabase/.temp/
