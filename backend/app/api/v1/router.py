@@ -13,6 +13,7 @@ from app.schemas import (
     ChatRequest, ChatResponse, ChatSessionResponse,
 )
 from app.services.upload_service import save_uploaded_file, process_book
+from app.services.storage_service import upload_book_async
 from app.services.rag_service import ask_book, ask_book_stream
 
 router = APIRouter()
@@ -75,13 +76,20 @@ async def upload_book(
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
     content = await file.read()
+
+    stored_url = None
+    try:
+        stored_url, _ = await upload_book_async(content, file.filename)
+    except Exception as e:
+        stored_url = "<upload-failed>"
+
     file_path = save_uploaded_file(content, file.filename)
 
     book = Book(
         user_id=user.id,
         title=title,
         author=author,
-        file_path=file_path,
+        file_path=stored_url or file_path,
         file_size=len(content),
         status="processing",
     )
