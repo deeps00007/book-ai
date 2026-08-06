@@ -82,6 +82,11 @@ export default function UploadPage() {
                   <p className="text-sm text-gray-500">
                     {(file.size / (1024 * 1024)).toFixed(1)} MB
                   </p>
+                  {file.size > 50 * 1024 * 1024 && (
+                    <p className="text-xs text-red-500 mt-1">
+                      Over 50MB limit — please compress this PDF first (e.g. Smallpdf / Adobe)
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={() => setFile(null)}

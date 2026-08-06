@@ -55,6 +55,12 @@ export async function getChapters(bookId: string) {
 export async function uploadBook(file: File, title: string, author?: string) {
   const token = localStorage.getItem("token");
 
+  if (file.size > 50 * 1024 * 1024) {
+    throw new Error(
+      "This PDF is larger than 50MB. The free plan limit is 50MB. Please compress the PDF (e.g. with Smallpdf or Adobe) and try again."
+    );
+  }
+
   const safeName = `${Date.now()}_${file.name.replace(/[^\w.\-]/g, "_")}`;
   const storageUrl = `${SUPABASE_URL}/storage/v1/object/books/${safeName}`;
 
@@ -70,7 +76,12 @@ export async function uploadBook(file: File, title: string, author?: string) {
 
   if (!upRes.ok) {
     const errText = await upRes.text().catch(() => "Storage upload failed");
-    throw new Error(`Storage upload failed: ${upRes.status}`);
+    if (upRes.status === 400 && errText.includes("exceeded")) {
+      throw new Error(
+        "This PDF exceeds the 50MB storage limit. Please compress it and try again."
+      );
+    }
+    throw new Error(`Upload to storage failed (${upRes.status}). Please try again.`);
   }
 
   const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/books/${safeName}`;
