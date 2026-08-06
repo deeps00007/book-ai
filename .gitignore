@@ -11,8 +11,12 @@ uploads/
 *.pdf
 
 # Env
+.env
 .env.local
 .env.production
+
+# DB
+*.db
 
 # Node
 node_modules/
