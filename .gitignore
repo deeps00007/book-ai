@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+venv/
+
+# Uploads
+uploads/
+*.pdf
+
+# Env
+.env.local
+.env.production
+
+# Node
+node_modules/
+.next/
+out/
+
+# Docker
+.docker/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp scripts
+extract.py
+books_text.txt
+
+# Old prototype
+app.py
+book.pdf
