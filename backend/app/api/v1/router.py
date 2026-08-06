@@ -1,5 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Body
 from fastapi.responses import StreamingResponse
+from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
@@ -66,31 +67,42 @@ async def get_me(user: User = Depends(get_current_user)):
 
 @router.post("/books/upload", response_model=BookUploadResponse)
 async def upload_book(
-    file: UploadFile = File(...),
-    title: str = Form(...),
-    author: str = Form(None),
+    req: dict = Body(...),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    if not file.filename.endswith(".pdf"):
+    title = req.get("title", "")
+    author = req.get("author") or None
+    storage_url = req.get("storage_url", "")
+    file_size = req.get("file_size", 0)
+
+    if not title or not storage_url:
+        raise HTTPException(status_code=400, detail="title and storage_url are required")
+
+    if not storage_url.lower().endswith(".pdf") and ".pdf" not in storage_url.lower():
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
 
-    content = await file.read()
-
-    stored_url = None
+    content = None
+    file_path = None
+    download_error = None
     try:
-        stored_url, _ = await upload_book_async(content, file.filename)
+        async with AsyncClient(timeout=300, follow_redirects=True) as http_client:
+            dl = await http_client.get(storage_url)
+            dl.raise_for_status()
+            content = dl.content
     except Exception as e:
-        stored_url = "<upload-failed>"
+        download_error = f"{type(e).__name__}: {str(e)[:150]}"
+        content = None
 
-    file_path = save_uploaded_file(content, file.filename)
+    if content and len(content) > 0:
+        file_path = save_uploaded_file(content, f"book_{len(content)}.pdf")
 
     book = Book(
         user_id=user.id,
         title=title,
         author=author,
-        file_path=stored_url or file_path,
-        file_size=len(content),
+        file_path=storage_url or (file_path or ""),
+        file_size=file_size or len(content or b""),
         status="processing",
     )
     db.add(book)
@@ -98,6 +110,16 @@ async def upload_book(
     await db.commit()
 
     try:
+        if not file_path:
+            book.status = "failed"
+            book.error_message = download_error or "Could not download PDF from storage"
+            await db.commit()
+            return BookUploadResponse(
+                book_id=book.id,
+                message=book.error_message,
+                status="failed",
+            )
+
         result = await process_book(file_path, title)
 
         chapter_map = {}

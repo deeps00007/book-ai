@@ -1,5 +1,10 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://bookai-api-three.vercel.app/api/v1";
 
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://ynltzrdihjycufniyvlk.supabase.co";
+const SUPABASE_ANON_KEY =
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubHR6cmRpaGp5Y3Vmbml5dmxrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYwMDQ5NjcsImV4cCI6MjEwMTU4MDk2N30.uTYgwfvdjLnA_Ed0JIW6YnGm8q4TcUJdpwaNNTefZe0";
+
 async function request(path: string, options: RequestInit = {}) {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   const headers: Record<string, string> = {
@@ -48,16 +53,35 @@ export async function getChapters(bookId: string) {
 }
 
 export async function uploadBook(file: File, title: string, author?: string) {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("title", title);
-  if (author) formData.append("author", author);
-
   const token = localStorage.getItem("token");
+
+  const safeName = `${Date.now()}_${file.name.replace(/[^\w.\-]/g, "_")}`;
+  const storageUrl = `${SUPABASE_URL}/storage/v1/object/books/${safeName}`;
+
+  const upRes = await fetch(storageUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/pdf",
+      "x-upsert": "false",
+    },
+    body: file,
+  });
+
+  if (!upRes.ok) {
+    const errText = await upRes.text().catch(() => "Storage upload failed");
+    throw new Error(`Storage upload failed: ${upRes.status}`);
+  }
+
+  const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/books/${safeName}`;
+
   const res = await fetch(`${API_BASE}/books/upload`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: formData,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ title, author, storage_url: publicUrl, file_size: file.size }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: "Upload failed" }));

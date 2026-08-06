@@ -1,11 +1,22 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import router as v1_router
 from app.api.v1.generate import router as generate_router
 from app.api.v1.test_paper import router as test_paper_router
+from app.core.database import engine, Base
 import logging
 
 logging.basicConfig(level=logging.INFO)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield
+    await engine.dispose()
 
 
 app = FastAPI(
@@ -13,6 +24,17 @@ app = FastAPI(
     description="Production RAG-powered AI Teaching Platform for schools and educators",
     version="1.0.0",
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request, exc):
+    import traceback
+    detail = f"{type(exc).__name__}: {str(exc)[:300]}"
+    logging.error(f"UNHANDLED: {traceback.format_exc()}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": detail, "trace": traceback.format_exc().split("\n")[-8:]},
+    )
 
 app.add_middleware(
     CORSMiddleware,
