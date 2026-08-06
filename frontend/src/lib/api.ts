@@ -5,6 +5,17 @@ const SUPABASE_ANON_KEY =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlubHR6cmRpaGp5Y3Vmbml5dmxrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYwMDQ5NjcsImV4cCI6MjEwMTU4MDk2N30.uTYgwfvdjLnA_Ed0JIW6YnGm8q4TcUJdpwaNNTefZe0";
 
+let _supabaseClient: any = null;
+async function getSupabaseClient() {
+  if (!_supabaseClient) {
+    const { createClient } = await import("@supabase/supabase-js");
+    _supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: false },
+    });
+  }
+  return _supabaseClient;
+}
+
 async function request(path: string, options: RequestInit = {}) {
   const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   const headers: Record<string, string> = {
@@ -54,37 +65,25 @@ export async function getChapters(bookId: string) {
 
 export async function uploadBook(file: File, title: string, author?: string) {
   const token = localStorage.getItem("token");
-
-  if (file.size > 50 * 1024 * 1024) {
-    throw new Error(
-      "This PDF is larger than 50MB. The free plan limit is 50MB. Please compress the PDF (e.g. with Smallpdf or Adobe) and try again."
-    );
-  }
+  const supabase = await getSupabaseClient();
 
   const safeName = `${Date.now()}_${file.name.replace(/[^\w.\-]/g, "_")}`;
-  const storageUrl = `${SUPABASE_URL}/storage/v1/object/books/${safeName}`;
 
-  const upRes = await fetch(storageUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-      "Content-Type": "application/pdf",
-      "x-upsert": "false",
-    },
-    body: file,
-  });
+  const { data: uploadData, error: uploadError } = await supabase.storage
+    .from("books")
+    .upload(safeName, file, {
+      cacheControl: "3600",
+      upsert: false,
+    });
 
-  if (!upRes.ok) {
-    const errText = await upRes.text().catch(() => "Storage upload failed");
-    if (upRes.status === 400 && errText.includes("exceeded")) {
-      throw new Error(
-        "This PDF exceeds the 50MB storage limit. Please compress it and try again."
-      );
-    }
-    throw new Error(`Upload to storage failed (${upRes.status}). Please try again.`);
+  if (uploadError) {
+    throw new Error(uploadError.message || "Upload to storage failed");
   }
 
-  const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/books/${safeName}`;
+  const publicUrl = supabase.storage.from("books").getPublicUrl(safeName).data?.publicUrl || "";
+  if (!publicUrl) {
+    throw new Error("Failed to get public URL for uploaded file");
+  }
 
   const res = await fetch(`${API_BASE}/books/upload`, {
     method: "POST",
