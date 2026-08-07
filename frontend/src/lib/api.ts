@@ -63,26 +63,48 @@ export async function getChapters(bookId: string) {
   return request(`/books/${bookId}/chapters`);
 }
 
-export async function uploadBook(file: File, title: string, author?: string) {
+export async function uploadBook(
+  file: File,
+  title: string,
+  author?: string,
+  onProgress?: (pct: number, msg: string) => void
+) {
   const token = localStorage.getItem("token");
   const supabase = await getSupabaseClient();
 
-  const safeName = `${Date.now()}_${file.name.replace(/[^\w.\-]/g, "_")}`;
+  const CHUNK_SIZE = 40 * 1024 * 1024; // 40MB per chunk (under 50MB limit)
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  const baseName = Date.now();
+  const chunkUrls: string[] = [];
 
-  const { data: uploadData, error: uploadError } = await supabase.storage
-    .from("books")
-    .upload(safeName, file, {
-      cacheControl: "3600",
-      upsert: false,
-    });
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, file.size);
+    const blob = file.slice(start, end, "application/pdf");
+    const chunkName = `chunks/${baseName}_part${i}.pdf`;
 
-  if (uploadError) {
-    throw new Error(uploadError.message || "Upload to storage failed");
+    if (totalChunks > 1) {
+      onProgress?.(
+        Math.round((i / totalChunks) * 90),
+        `Uploading part ${i + 1}/${totalChunks} (${(blob.size / 1024 / 1024).toFixed(1)} MB)`
+      );
+    }
+
+    const { data, error } = await supabase.storage
+      .from("books")
+      .upload(chunkName, blob, { cacheControl: "3600", upsert: false });
+
+    if (error) {
+      throw new Error(`Part ${i + 1} upload failed: ${error.message}`);
+    }
+
+    const url = supabase.storage.from("books").getPublicUrl(chunkName).data?.publicUrl || "";
+    if (!url) throw new Error(`Failed to get public URL for part ${i + 1}`);
+    chunkUrls.push(url);
   }
 
-  const publicUrl = supabase.storage.from("books").getPublicUrl(safeName).data?.publicUrl || "";
-  if (!publicUrl) {
-    throw new Error("Failed to get public URL for uploaded file");
+  if (totalChunks > 1) {
+    onProgress?.(95, "Combining chunks...");
   }
 
   const res = await fetch(`${API_BASE}/books/upload`, {
@@ -91,8 +113,15 @@ export async function uploadBook(file: File, title: string, author?: string) {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ title, author, storage_url: publicUrl, file_size: file.size }),
+    body: JSON.stringify({
+      title,
+      author,
+      storage_url: totalChunks === 1 ? chunkUrls[0] : "",
+      storage_urls: totalChunks > 1 ? chunkUrls : undefined,
+      file_size: file.size,
+    }),
   });
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: "Upload failed" }));
     throw new Error(err.detail);

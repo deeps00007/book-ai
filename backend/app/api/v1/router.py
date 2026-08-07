@@ -74,25 +74,50 @@ async def upload_book(
     title = req.get("title", "")
     author = req.get("author") or None
     storage_url = req.get("storage_url", "")
+    storage_urls = req.get("storage_urls", [])
     file_size = req.get("file_size", 0)
 
-    if not title or not storage_url:
-        raise HTTPException(status_code=400, detail="title and storage_url are required")
+    if not title:
+        raise HTTPException(status_code=400, detail="title is required")
 
-    if not storage_url.lower().endswith(".pdf") and ".pdf" not in storage_url.lower():
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    # Support single URL (small files) or multiple chunk URLs (large files)
+    urls_to_download = storage_urls if storage_urls else ([storage_url] if storage_url else [])
 
-    content = None
-    file_path = None
+    if not urls_to_download:
+        raise HTTPException(status_code=400, detail="storage_url or storage_urls is required")
+
+    # Download all chunks in parallel
+    content_parts = []
     download_error = None
-    try:
-        async with AsyncClient(timeout=300, follow_redirects=True) as http_client:
-            dl = await http_client.get(storage_url)
-            dl.raise_for_status()
-            content = dl.content
-    except Exception as e:
-        download_error = f"{type(e).__name__}: {str(e)[:150]}"
-        content = None
+
+    async def download_one(url):
+        async with AsyncClient(timeout=120, follow_redirects=True) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            return r.content
+
+    if len(urls_to_download) == 1:
+        try:
+            async with AsyncClient(timeout=120, follow_redirects=True) as http_client:
+                dl = await http_client.get(urls_to_download[0])
+                dl.raise_for_status()
+                content_parts = [dl.content]
+        except Exception as e:
+            download_error = f"Download: {type(e).__name__}: {str(e)[:100]}"
+    else:
+        import asyncio as _asyncio
+        try:
+            results = await _asyncio.gather(*[download_one(u) for u in urls_to_download], return_exceptions=True)
+            for i, r in enumerate(results):
+                if isinstance(r, Exception):
+                    download_error = f"Part {i+1}: {type(r).__name__}: {str(r)[:100]}"
+                    break
+                content_parts.append(r)
+        except Exception as e:
+            download_error = f"Gather: {type(e).__name__}: {str(e)[:100]}"
+
+    content = b"".join(content_parts) if content_parts else None
+    file_path = None
 
     if content and len(content) > 0:
         file_path = save_uploaded_file(content, f"book_{len(content)}.pdf")

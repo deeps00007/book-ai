@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import { uploadBook } from "@/lib/api";
-import { Upload, FileText, X, Loader2, ArrowLeft } from "lucide-react";
+import { Upload, FileText, X, Loader2, ArrowLeft, Check } from "lucide-react";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
 
@@ -14,6 +14,8 @@ export default function UploadPage() {
   const [title, setTitle] = useState("");
   const [author, setAuthor] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressMsg, setProgressMsg] = useState("");
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const f = acceptedFiles[0];
@@ -33,10 +35,17 @@ export default function UploadPage() {
   const handleUpload = async () => {
     if (!file || !title) return;
     setUploading(true);
+    setProgress(0);
+    setProgressMsg("Starting upload...");
     try {
-      const result = await uploadBook(file, title, author);
+      const result = await uploadBook(file, title, author, (pct, msg) => {
+        setProgress(pct);
+        setProgressMsg(msg);
+      });
+      setProgress(100);
+      setProgressMsg("Processing on server — this may take a minute...");
       toast.success("Book uploaded! Processing has started.");
-      router.push("/books");
+      setTimeout(() => router.push("/books"), 1000);
     } catch (err: any) {
       toast.error(err.message || "Upload failed");
     } finally {
@@ -76,46 +85,60 @@ export default function UploadPage() {
           ) : (
             <div className="space-y-6">
               <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
-                <FileText className="w-10 h-10 text-brand-600" />
-                <div className="flex-1">
-                  <p className="font-medium text-gray-900">{file.name}</p>
-                  <p className="text-sm text-gray-500">
-                    {(file.size / (1024 * 1024)).toFixed(1)} MB
-                  </p>
+                <FileText className="w-10 h-10 text-brand-600 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-gray-900 truncate">{file.name}</p>
+                  <p className="text-sm text-gray-500">{(file.size / (1024 * 1024)).toFixed(1)} MB</p>
                 </div>
-                <button
-                  onClick={() => setFile(null)}
-                  className="p-1 hover:bg-gray-200 rounded"
-                >
-                  <X className="w-5 h-5 text-gray-400" />
-                </button>
+                {!uploading && (
+                  <button onClick={() => setFile(null)} className="p-1 hover:bg-gray-200 rounded">
+                    <X className="w-5 h-5 text-gray-400" />
+                  </button>
+                )}
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Book Title *
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Book Title *</label>
                 <input
-                  type="text"
-                  value={title}
+                  type="text" value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none"
+                  disabled={uploading}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none disabled:opacity-50"
                   placeholder="e.g. Physics Grade 10"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Author (optional)
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Author (optional)</label>
                 <input
-                  type="text"
-                  value={author}
+                  type="text" value={author}
                   onChange={(e) => setAuthor(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none"
+                  disabled={uploading}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none disabled:opacity-50"
                   placeholder="e.g. NCERT"
                 />
               </div>
+
+              {uploading && (
+                <div className="bg-gray-50 rounded-xl p-6 space-y-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600">{progressMsg}</span>
+                    <span className="font-medium text-brand-600">{progress}%</span>
+                  </div>
+                  <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-brand-600 rounded-full transition-all duration-500 ease-out"
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  {progress === 100 && (
+                    <p className="text-xs text-gray-400 flex items-center gap-1">
+                      <Check className="w-3 h-3 text-green-500" />
+                      Upload complete — now processing on server. You'll be redirected shortly.
+                    </p>
+                  )}
+                </div>
+              )}
 
               <button
                 onClick={handleUpload}
@@ -125,7 +148,7 @@ export default function UploadPage() {
                 {uploading ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Uploading...
+                    Uploading{progress > 0 ? ` ${progress}%` : "..."}
                   </>
                 ) : (
                   <>

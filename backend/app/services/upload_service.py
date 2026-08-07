@@ -4,6 +4,9 @@ import re
 import uuid
 import logging
 from pypdf import PdfReader
+import pypdf.filters
+pypdf.filters._MAX_BYTES_DECOMPRESSED = 500_000_000
+pypdf.filters.ZLIB_MAX_OUTPUT_LENGTH = 500_000_000
 from app.core.config import settings
 from app.services.embedding_service import create_embeddings_batch
 

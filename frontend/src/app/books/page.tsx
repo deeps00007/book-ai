@@ -86,7 +86,7 @@ export default function BooksPage() {
                     <div className="flex items-center gap-3">
                       <span
                         className={cn(
-                          "px-3 py-1 rounded-full text-xs font-medium",
+                          "px-3 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1.5",
                           book.status === "ready"
                             ? "bg-green-50 text-green-700"
                             : book.status === "processing"
@@ -96,6 +96,9 @@ export default function BooksPage() {
                             : "bg-gray-50 text-gray-600"
                         )}
                       >
+                        {book.status === "processing" && (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        )}
                         {book.status}
                       </span>
                       {book.status === "ready" && (
