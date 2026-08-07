@@ -4,6 +4,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
+import asyncio
 from app.core.database import get_db
 from app.core.security import hash_password, verify_password, create_access_token
 from app.api.deps import get_current_user
@@ -85,6 +86,22 @@ async def upload_book(
 
     if not urls_to_download:
         raise HTTPException(status_code=400, detail="storage_url or storage_urls is required")
+
+    is_chunked = len(urls_to_download) > 1
+
+    if is_chunked:
+        book = Book(user_id=user.id, title=title, author=author,
+                     file_path=urls_to_download[0], file_size=file_size,
+                     status="uploaded",
+                     error_message=json.dumps({"storage_urls": urls_to_download}))
+        db.add(book)
+        await db.flush()
+        await db.commit()
+        return BookUploadResponse(
+            book_id=book.id,
+            message=f"Uploaded in {len(urls_to_download)} parts. Processing will start shortly.",
+            status="uploading",
+        )
 
     # Download all chunks in parallel
     content_parts = []
@@ -193,6 +210,93 @@ async def upload_book(
             message=f"Processing failed: {str(e)}",
             status="failed",
         )
+
+
+@router.post("/books/{book_id}/process", response_model=BookUploadResponse)
+async def process_book_endpoint(
+    book_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    book = await db.get(Book, book_id)
+    if not book or book.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Book not found")
+    if book.status not in ("uploaded", "uploading", "processing"):
+        raise HTTPException(status_code=400, detail=f"Book is already {book.status}")
+
+    if book.status != "uploaded":
+        return BookUploadResponse(book_id=book.id, message="Already processing", status="processing")
+
+    urls = []
+    if book.error_message:
+        try:
+            urls = json.loads(book.error_message).get("storage_urls", [])
+        except Exception:
+            pass
+    if not urls:
+        raise HTTPException(status_code=400, detail="No source URLs found")
+
+    book.status = "processing"
+    await db.commit()
+
+    parts = []
+    err = None
+
+    async def get(url):
+        async with AsyncClient(timeout=120, follow_redirects=True) as c:
+            r = await c.get(url)
+            r.raise_for_status()
+            return r.content
+
+    try:
+        if len(urls) == 1:
+            async with AsyncClient(timeout=120, follow_redirects=True) as c:
+                r = await c.get(urls[0])
+                r.raise_for_status()
+                parts = [r.content]
+        else:
+            res = await asyncio.gather(*[get(u) for u in urls], return_exceptions=True)
+            for i, r in enumerate(res):
+                if isinstance(r, Exception):
+                    err = f"Part {i+1}: {type(r).__name__}"
+                    break
+                parts.append(r)
+    except Exception as e:
+        err = str(e)[:150]
+
+    if err or not parts:
+        book.status = "failed"
+        book.error_message = err or "Download failed"
+        await db.commit()
+        return BookUploadResponse(book_id=book.id, message=book.error_message, status="failed")
+
+    content = b"".join(parts)
+    fp = save_uploaded_file(content, f"book_{len(content)}.pdf")
+    book.file_path = fp
+    await db.commit()
+
+    try:
+        result = await process_book(fp, book.title)
+        for ci in result.get("chapters", []):
+            db.add(Chapter(book_id=book.id, title=ci["title"],
+                           order=len(result["chapters"]) + 1,
+                           start_page=ci["start_page"], end_page=ci["end_page"]))
+            await db.flush()
+        for ck in result["chunks"]:
+            db.add(BookChunk(book_id=book.id, chunk_index=ck["index"],
+                             content=ck["text"], embedding_json=ck.get("embedding_json")))
+        book.status = "ready"
+        book.total_chunks = result["total_chunks"]
+        book.total_pages = result["total_pages"]
+        await db.commit()
+        return BookUploadResponse(book_id=book.id,
+            message=f"Done: {len(result['chapters'])} chapters, {result['total_chunks']} chunks",
+            status="ready")
+    except Exception as e:
+        book.status = "failed"
+        book.error_message = str(e)[:300]
+        await db.commit()
+        return BookUploadResponse(book_id=book.id, message=f"Failed: {str(e)[:150]}", status="failed")
 
 
 @router.get("/books", response_model=list[BookResponse])

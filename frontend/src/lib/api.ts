@@ -126,7 +126,21 @@ export async function uploadBook(
     const err = await res.json().catch(() => ({ detail: "Upload failed" }));
     throw new Error(err.detail);
   }
-  return res.json();
+
+  const uploadResult = await res.json();
+
+  if (uploadResult.status === "uploading" && uploadResult.book_id) {
+    onProgress?.(98, "Processing book content...");
+    const pRes = await fetch(`${API_BASE}/books/${uploadResult.book_id}/process`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const pResult = await pRes.json();
+    if (!pRes.ok) throw new Error(pResult.message || "Processing failed");
+    return pResult;
+  }
+
+  return uploadResult;
 }
 
 export async function askQuestion(bookId: string, question: string, sessionId?: string, chapterId?: string) {
