@@ -28,7 +28,9 @@ async function request(path: string, options: RequestInit = {}) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || "Request failed");
   }
-  return res.json();
+  return res.json().catch(() => {
+    throw new Error("Server returned an invalid response");
+  });
 }
 
 export async function login(data: { email: string; password: string }) {
@@ -127,7 +129,7 @@ export async function uploadBook(
     throw new Error(err.detail);
   }
 
-  const uploadResult = await res.json();
+  const uploadResult = await res.json().catch(() => ({}));
 
   if (uploadResult.status === "uploading" && uploadResult.book_id) {
     onProgress?.(98, "Processing book content...");
@@ -135,7 +137,7 @@ export async function uploadBook(
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
     });
-    const pResult = await pRes.json();
+    const pResult = await pRes.json().catch(() => ({ message: "Server error during processing" }));
     if (!pRes.ok) throw new Error(pResult.message || "Processing failed");
     return pResult;
   }

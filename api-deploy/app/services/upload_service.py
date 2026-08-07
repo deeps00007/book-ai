@@ -3,6 +3,11 @@ import os
 import re
 import uuid
 import logging
+try:
+    import fitz
+    HAS_FITZ = True
+except ImportError:
+    HAS_FITZ = False
 from pypdf import PdfReader
 import pypdf.filters
 pypdf.filters._MAX_BYTES_DECOMPRESSED = 500_000_000
@@ -21,28 +26,64 @@ CHAPTER_PATTERNS = [
 ]
 
 
-def detect_chapters_from_pdf(file_path: str) -> list[dict]:
+def _get_text_fitz(file_path: str, page_num: int) -> str:
+    doc = fitz.open(file_path)
+    try:
+        if page_num >= doc.page_count:
+            return ""
+        return doc[page_num].get_text()
+    finally:
+        doc.close()
+
+
+def _get_text_pypdf(file_path: str, page_num: int) -> str:
     reader = PdfReader(file_path)
+    try:
+        if page_num >= len(reader.pages):
+            return ""
+        return reader.pages[page_num].extract_text() or ""
+    finally:
+        pass
+
+
+def detect_chapters_from_pdf(file_path: str) -> list[dict]:
     chapters = []
     seen = set()
 
-    for pi, page in enumerate(reader.pages):
-        text = page.extract_text()
-        if not text:
-            continue
-        for line in text.split("\n"):
-            line = line.strip()
-            if len(line) < 3 or len(line) > 200:
+    if HAS_FITZ:
+        doc = fitz.open(file_path)
+        total_pages = doc.page_count
+        for pi in range(total_pages):
+            text = doc[pi].get_text()
+            if not text:
                 continue
-            for pattern in CHAPTER_PATTERNS:
-                match = pattern.match(line)
-                if match and line not in seen:
-                    seen.add(line)
-                    chapters.append({
-                        "title": line,
-                        "page_number": pi + 1,
-                    })
-                    break
+            for line in text.split("\n"):
+                line = line.strip()
+                if len(line) < 3 or len(line) > 200:
+                    continue
+                for pattern in CHAPTER_PATTERNS:
+                    match = pattern.match(line)
+                    if match and line not in seen:
+                        seen.add(line)
+                        chapters.append({"title": line, "page_number": pi + 1})
+                        break
+        doc.close()
+    else:
+        reader = PdfReader(file_path)
+        for pi, page in enumerate(reader.pages):
+            text = page.extract_text()
+            if not text:
+                continue
+            for line in text.split("\n"):
+                line = line.strip()
+                if len(line) < 3 or len(line) > 200:
+                    continue
+                for pattern in CHAPTER_PATTERNS:
+                    match = pattern.match(line)
+                    if match and line not in seen:
+                        seen.add(line)
+                        chapters.append({"title": line, "page_number": pi + 1})
+                        break
 
     if not chapters:
         return [{"title": "Full Book", "page_number": 1}]
@@ -61,28 +102,49 @@ def detect_chapters_from_pdf(file_path: str) -> list[dict]:
 
 
 def extract_text_by_chapters(file_path: str, chapters: list[dict]) -> list[dict]:
-    reader = PdfReader(file_path)
-    total_pages = len(reader.pages)
-
-    for i, chapter in enumerate(chapters):
-        start_page = chapter["page_number"] - 1
-        if i + 1 < len(chapters):
-            next_page = chapters[i + 1]["page_number"] - 1
-            end_page = max(start_page, next_page)
-        else:
-            end_page = total_pages
-        chapter["start_page"] = start_page + 1
-        chapter["end_page"] = max(start_page + 1, end_page)
-
-        text_parts = []
-        for pi in range(start_page, min(end_page, total_pages)):
-            try:
-                pt = reader.pages[pi].extract_text()
-                if pt:
-                    text_parts.append(pt)
-            except Exception:
-                pass
-        chapter["text"] = "\n\n".join(text_parts) if text_parts else chapter.get("title", "")
+    if HAS_FITZ:
+        doc = fitz.open(file_path)
+        total_pages = doc.page_count
+        for i, chapter in enumerate(chapters):
+            start_page = chapter["page_number"] - 1
+            if i + 1 < len(chapters):
+                next_page = chapters[i + 1]["page_number"] - 1
+                end_page = max(start_page, next_page)
+            else:
+                end_page = total_pages
+            chapter["start_page"] = start_page + 1
+            chapter["end_page"] = max(start_page + 1, end_page)
+            text_parts = []
+            for pi in range(start_page, min(end_page, total_pages)):
+                try:
+                    pt = doc[pi].get_text()
+                    if pt:
+                        text_parts.append(pt)
+                except Exception:
+                    pass
+            chapter["text"] = "\n\n".join(text_parts) if text_parts else chapter.get("title", "")
+        doc.close()
+    else:
+        reader = PdfReader(file_path)
+        total_pages = len(reader.pages)
+        for i, chapter in enumerate(chapters):
+            start_page = chapter["page_number"] - 1
+            if i + 1 < len(chapters):
+                next_page = chapters[i + 1]["page_number"] - 1
+                end_page = max(start_page, next_page)
+            else:
+                end_page = total_pages
+            chapter["start_page"] = start_page + 1
+            chapter["end_page"] = max(start_page + 1, end_page)
+            text_parts = []
+            for pi in range(start_page, min(end_page, total_pages)):
+                try:
+                    pt = reader.pages[pi].extract_text()
+                    if pt:
+                        text_parts.append(pt)
+                except Exception:
+                    pass
+            chapter["text"] = "\n\n".join(text_parts) if text_parts else chapter.get("title", "")
 
     return chapters
 
@@ -121,9 +183,14 @@ async def process_book(
     chapters = detect_chapters_from_pdf(file_path)
     chapters = extract_text_by_chapters(file_path, chapters)
 
-    reader = PdfReader(file_path)
-    total_pages = len(reader.pages)
-    del reader
+    if HAS_FITZ:
+        doc = fitz.open(file_path)
+        total_pages = doc.page_count
+        doc.close()
+    else:
+        reader = PdfReader(file_path)
+        total_pages = len(reader.pages)
+        del reader
 
     all_chunks = []
     chunk_index = 0
