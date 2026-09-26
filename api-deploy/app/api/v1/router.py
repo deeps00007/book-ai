@@ -164,6 +164,8 @@ async def _process_queued_book(db: AsyncSession, book: Book) -> BookUploadRespon
                 chapter_id=cmap.get(ck.get("chapter", {}).get("title", "")),
                 chunk_index=ck["index"], content=ck["text"],
                 embedding_json=ck.get("embedding_json"),
+                page_start=ck.get("page_start", 0),
+                page_end=ck.get("page_end", 0),
             ))
         book.status = "ready"
         book.total_chunks = result["total_chunks"]
@@ -452,6 +454,8 @@ async def process_book_endpoint(
                 chapter_id=chapter_map.get(ck.get("chapter", {}).get("title", "")),
                 chunk_index=ck["index"], content=ck["text"],
                 embedding_json=ck.get("embedding_json"),
+                page_start=ck.get("page_start", 0),
+                page_end=ck.get("page_end", 0),
             ))
 
         book.status = "ready"

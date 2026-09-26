@@ -104,6 +104,8 @@ async def process_one(book_id: str):
                     chapter_id=cmap.get(ck.get("chapter", {}).get("title", "")),
                     chunk_index=ck["index"], content=ck["text"],
                     embedding_json=ck.get("embedding_json"),
+                    page_start=ck.get("page_start", 0),
+                    page_end=ck.get("page_end", 0),
                 ))
 
             book.status = "ready"

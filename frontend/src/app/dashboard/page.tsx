@@ -26,6 +26,16 @@ export default function DashboardPage() {
     loadBooks();
   }, [user, authLoading]);
 
+  // Auto-poll while books are still processing so status updates itself.
+  useEffect(() => {
+    const pending = books.some((b) => b.status !== "ready" && b.status !== "failed");
+    if (!pending) return;
+    const id = setInterval(() => {
+      getBooks().then(setBooks).catch(() => {});
+    }, 5000);
+    return () => clearInterval(id);
+  }, [books]);
+
   async function loadBooks() {
     try {
       const data = await getBooks();

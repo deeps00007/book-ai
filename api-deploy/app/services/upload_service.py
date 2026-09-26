@@ -19,158 +19,138 @@ logger = logging.getLogger(__name__)
 
 
 CHAPTER_PATTERNS = [
-    re.compile(r"(?:Chapter|CHAPTER|Lesson|UNIT|Unit)\s+(\d+|[IVXLC]+)[\s:.\-–—]*(.*)", re.IGNORECASE),
-    re.compile(r"^(\d+)\.\s+([A-Z][\w\s,;:'\"()\-–—&]+)$"),
-    re.compile(r"^(Chapter|CHAPTER)\s+(\d+|[IVXLC]+)$", re.IGNORECASE),
-    re.compile(r"^(Section|Part)\s+(\d+|[IVXLC]+)[\s:.\-–—]*(.*)", re.IGNORECASE),
+    re.compile(r"^(CHAPTER|Chapter)\s+([0-9]{1,2}|[IVXLC]{1,5})\b", re.IGNORECASE),
+    re.compile(r"^(UNIT|Unit)\s+([0-9]{1,2}|[IVXLC]{1,5})\b", re.IGNORECASE),
+    re.compile(r"^(Lesson|Section|Part|Topic)\s+([0-9]{1,2}|[IVXLC]{1,5})\b", re.IGNORECASE),
 ]
 
 
-def _get_text_fitz(file_path: str, page_num: int) -> str:
-    doc = fitz.open(file_path)
-    try:
-        if page_num >= doc.page_count:
-            return ""
-        return doc[page_num].get_text()
-    finally:
-        doc.close()
+def clean_text(text: str) -> str:
+    """Remove replacement chars, control chars, and collapse whitespace."""
+    if not text:
+        return ""
+    text = text.replace("\ufffd", " ").replace("\u00a0", " ")
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
-def _get_text_pypdf(file_path: str, page_num: int) -> str:
-    reader = PdfReader(file_path)
-    try:
-        if page_num >= len(reader.pages):
-            return ""
-        return reader.pages[page_num].extract_text() or ""
-    finally:
-        pass
-
-
-def detect_chapters_from_pdf(file_path: str) -> list[dict]:
-    chapters = []
-    seen = set()
-
+def extract_pages(file_path: str) -> list[dict]:
+    """Return [{page: n, text: ...}] in reading order (1-indexed)."""
+    pages = []
     if HAS_FITZ:
         doc = fitz.open(file_path)
-        total_pages = doc.page_count
-        for pi in range(total_pages):
-            text = doc[pi].get_text()
-            if not text:
-                continue
-            for line in text.split("\n"):
-                line = line.strip()
-                if len(line) < 3 or len(line) > 200:
-                    continue
-                for pattern in CHAPTER_PATTERNS:
-                    match = pattern.match(line)
-                    if match and line not in seen:
-                        seen.add(line)
-                        chapters.append({"title": line, "page_number": pi + 1})
-                        break
+        for i in range(doc.page_count):
+            pages.append({"page": i + 1, "text": clean_text(doc[i].get_text())})
         doc.close()
     else:
         reader = PdfReader(file_path)
-        for pi, page in enumerate(reader.pages):
-            text = page.extract_text()
-            if not text:
-                continue
-            for line in text.split("\n"):
-                line = line.strip()
-                if len(line) < 3 or len(line) > 200:
-                    continue
-                for pattern in CHAPTER_PATTERNS:
-                    match = pattern.match(line)
-                    if match and line not in seen:
-                        seen.add(line)
-                        chapters.append({"title": line, "page_number": pi + 1})
-                        break
+        for i, page in enumerate(reader.pages):
+            try:
+                t = page.extract_text() or ""
+            except Exception:
+                t = ""
+            pages.append({"page": i + 1, "text": clean_text(t)})
+    return pages
 
-    if not chapters:
+
+def detect_chapters(pages: list[dict], file_path: str) -> list[dict]:
+    """Best-effort chapter detection using large-font headings only.
+
+    Never used for chunk boundaries (chunking follows page order), only for
+    navigation labels. Falls back to a single 'Full Book' chapter.
+    """
+    found = []
+
+    if HAS_FITZ:
+        try:
+            doc = fitz.open(file_path)
+            sizes = []
+            for page in doc:
+                for block in page.get_text("dict")["blocks"]:
+                    for line in block.get("lines", []):
+                        for span in line["spans"]:
+                            sizes.append(span["size"])
+            sizes.sort()
+            median = sizes[len(sizes) // 2] if sizes else 10.0
+            threshold = median * 1.35
+
+            current = None
+            for i in range(doc.page_count):
+                page = doc[i]
+                best = None
+                for block in page.get_text("dict")["blocks"]:
+                    for line in block.get("lines", []):
+                        line_text = "".join(s["text"] for s in line["spans"]).strip()
+                        if not line_text or len(line_text) > 90:
+                            continue
+                        max_size = max((s["size"] for s in line["spans"]), default=0)
+                        if max_size < threshold:
+                            continue
+                        for pat in CHAPTER_PATTERNS:
+                            if pat.match(line_text):
+                                if best is None or max_size > best[1]:
+                                    best = (line_text, max_size)
+                                break
+                if best and (current is None or best[0] != current[0]):
+                    found.append({"title": best[0], "page_number": i + 1})
+                    current = best
+            doc.close()
+        except Exception as e:
+            logger.warning(f"Chapter detection failed: {e}")
+
+    if not found:
         return [{"title": "Full Book", "page_number": 1}]
 
-    merged = [chapters[0]]
-    for ch in chapters[1:]:
-        if ch["page_number"] - merged[-1]["page_number"] >= 1:
+    # dedupe consecutive / same page
+    merged = []
+    for ch in found:
+        if not merged or ch["page_number"] != merged[-1]["page_number"]:
             merged.append(ch)
-        elif len(ch["title"]) > len(merged[-1]["title"]):
-            merged[-1] = ch
-
-    if len(merged) <= 1:
-        return [{"title": "Full Book", "page_number": 1}]
-
     return merged
 
 
-def extract_text_by_chapters(file_path: str, chapters: list[dict]) -> list[dict]:
-    if HAS_FITZ:
-        doc = fitz.open(file_path)
-        total_pages = doc.page_count
-        for i, chapter in enumerate(chapters):
-            start_page = chapter["page_number"] - 1
-            if i + 1 < len(chapters):
-                next_page = chapters[i + 1]["page_number"] - 1
-                end_page = max(start_page, next_page)
-            else:
-                end_page = total_pages
-            chapter["start_page"] = start_page + 1
-            chapter["end_page"] = max(start_page + 1, end_page)
-            text_parts = []
-            for pi in range(start_page, min(end_page, total_pages)):
-                try:
-                    pt = doc[pi].get_text()
-                    if pt:
-                        text_parts.append(pt)
-                except Exception:
-                    pass
-            chapter["text"] = "\n\n".join(text_parts) if text_parts else chapter.get("title", "")
-        doc.close()
-    else:
-        reader = PdfReader(file_path)
-        total_pages = len(reader.pages)
-        for i, chapter in enumerate(chapters):
-            start_page = chapter["page_number"] - 1
-            if i + 1 < len(chapters):
-                next_page = chapters[i + 1]["page_number"] - 1
-                end_page = max(start_page, next_page)
-            else:
-                end_page = total_pages
-            chapter["start_page"] = start_page + 1
-            chapter["end_page"] = max(start_page + 1, end_page)
-            text_parts = []
-            for pi in range(start_page, min(end_page, total_pages)):
-                try:
-                    pt = reader.pages[pi].extract_text()
-                    if pt:
-                        text_parts.append(pt)
-                except Exception:
-                    pass
-            chapter["text"] = "\n\n".join(text_parts) if text_parts else chapter.get("title", "")
+def chunk_pages(pages: list[dict], chunk_words: int = None, overlap_words: int = None) -> list[dict]:
+    """Chunk the document in page order, tracking accurate page ranges."""
+    cw = chunk_words or settings.chunk_size
+    ow = overlap_words or settings.chunk_overlap
 
-    return chapters
-
-
-def chunk_text(text: str, chunk_size: int = None, overlap: int = None) -> list[dict]:
-    cs = chunk_size or settings.chunk_size
-    ov = overlap or settings.chunk_overlap
-
-    sentences = text.replace("\n", " ").split(". ")
     chunks = []
-    current_chunk = ""
+    buf = ""
+    start_page = None
 
-    for sentence in sentences:
-        tentative = current_chunk + (". " if current_chunk else "") + sentence
-        if len(tentative.split()) > cs and current_chunk:
-            chunks.append({"text": current_chunk.strip(), "index": len(chunks)})
-            words = current_chunk.split()
-            overlap_words = words[-ov:] if len(words) > ov else words
-            current_chunk = " ".join(overlap_words) + " " + sentence
-        else:
-            current_chunk = tentative
+    for p in pages:
+        text = p["text"]
+        if not text:
+            continue
+        if start_page is None:
+            start_page = p["page"]
+        buf = (buf + "\n" + text).strip()
+        end_page = p["page"]
 
-    if current_chunk.strip():
-        chunks.append({"text": current_chunk.strip(), "index": len(chunks)})
+        words = buf.split()
+        if len(words) >= cw:
+            chunks.append({"text": buf, "page_start": start_page, "page_end": end_page})
+            tail = words[-ow:] if len(words) > ow else words
+            buf = " ".join(tail)
+            start_page = p["page"]
+
+    if buf.strip() and len(buf.split()) > 30:
+        chunks.append({"text": buf.strip(), "page_start": start_page or 1, "page_end": pages[-1]["page"] if pages else 1})
 
     return chunks
+
+
+def assign_chapter(chunk_page: int, chapters: list[dict]) -> dict:
+    """Return the latest chapter starting at or before the chunk's page."""
+    chosen = chapters[0] if chapters else {"title": "Full Book", "page_number": 1}
+    for ch in chapters:
+        if ch["page_number"] <= chunk_page:
+            chosen = ch
+        else:
+            break
+    return chosen
 
 
 async def process_book(
@@ -181,34 +161,24 @@ async def process_book(
 ) -> dict:
     logger.info(f"Processing book: {book_title}")
 
-    chapters = detect_chapters_from_pdf(file_path)
-    chapters = extract_text_by_chapters(file_path, chapters)
+    pages = extract_pages(file_path)
+    total_pages = len(pages)
 
-    if HAS_FITZ:
-        doc = fitz.open(file_path)
-        total_pages = doc.page_count
-        doc.close()
-    else:
-        reader = PdfReader(file_path)
-        total_pages = len(reader.pages)
-        del reader
+    chapters = detect_chapters(pages, file_path)
+
+    # chunk strictly in page order
+    raw_chunks = chunk_pages(pages)
 
     all_chunks = []
-    chunk_index = 0
-
-    for chapter in chapters:
-        if not chapter.get("text"):
-            continue
-        chapter_chunks = chunk_text(chapter["text"])
-        for c in chapter_chunks:
-            c["index"] = chunk_index
-            c["chapter"] = {
-                "title": chapter["title"],
-                "start_page": chapter["start_page"],
-                "end_page": chapter["end_page"],
-            }
-            chunk_index += 1
-        all_chunks.extend(chapter_chunks)
+    for idx, c in enumerate(raw_chunks):
+        ch = assign_chapter(c["page_start"], chapters)
+        all_chunks.append({
+            "index": idx,
+            "text": c["text"],
+            "page_start": c["page_start"],
+            "page_end": c["page_end"],
+            "chapter": {"title": ch["title"], "start_page": ch.get("page_number", 1)},
+        })
 
     if on_progress:
         await on_progress(10)
@@ -222,7 +192,7 @@ async def process_book(
         embeddings = await create_embeddings_batch(batch, user_id)
         all_embeddings.extend(embeddings)
         if on_progress:
-            progress = min(100, 10 + int((i + len(batch)) / len(chunk_texts) * 90))
+            progress = min(100, 10 + int((i + len(batch)) / max(len(chunk_texts), 1) * 90))
             await on_progress(progress)
 
     for chunk, embedding in zip(all_chunks, all_embeddings):
@@ -233,7 +203,10 @@ async def process_book(
         "total_pages": total_pages,
         "total_chunks": len(all_chunks),
         "chunks": all_chunks,
-        "chapters": [{"title": ch["title"], "start_page": ch["start_page"], "end_page": ch["end_page"]} for ch in chapters],
+        "chapters": [
+            {"title": ch["title"], "start_page": ch["page_number"], "end_page": ch["page_number"]}
+            for ch in chapters
+        ],
     }
 
 

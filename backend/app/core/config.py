@@ -35,8 +35,8 @@ class Settings(BaseSettings):
 
     embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
     embedding_dimension: int = 768
-    chunk_size: int = 1000
-    chunk_overlap: int = 200
+    chunk_size: int = 500
+    chunk_overlap: int = 80
 
     default_llm_model: str = "accounts/fireworks/models/deepseek-v4p1-flash"
     default_llm_provider: str = "fireworks"

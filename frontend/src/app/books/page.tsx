@@ -22,6 +22,17 @@ export default function BooksPage() {
     getBooks().then(setBooks).finally(() => setLoading(false));
   }, [user, authLoading]);
 
+  // Auto-poll while any book is still uploading/processing so the status
+  // updates by itself — no manual refresh needed.
+  useEffect(() => {
+    const pending = books.some((b) => b.status !== "ready" && b.status !== "failed");
+    if (!pending) return;
+    const id = setInterval(() => {
+      getBooks().then(setBooks).catch(() => {});
+    }, 5000);
+    return () => clearInterval(id);
+  }, [books]);
+
   if (authLoading || loading) {
     return (
       <div className="flex h-screen">
@@ -90,17 +101,25 @@ export default function BooksPage() {
                           "px-3 py-1 rounded-full text-xs font-medium inline-flex items-center gap-1.5",
                           book.status === "ready"
                             ? "bg-green-50 text-green-700"
-                            : book.status === "processing"
+                            : book.status === "processing" || book.status === "uploaded"
                             ? "bg-yellow-50 text-yellow-700"
                             : book.status === "failed"
                             ? "bg-red-50 text-red-700"
                             : "bg-gray-50 text-gray-600"
                         )}
                       >
-                        {book.status === "processing" && (
+                        {(book.status === "processing" || book.status === "uploaded") && (
                           <Loader2 className="w-3 h-3 animate-spin" />
                         )}
-                        {book.status}
+                        {book.status === "uploaded"
+                          ? "Queued"
+                          : book.status === "processing"
+                          ? "Processing"
+                          : book.status === "ready"
+                          ? "Ready"
+                          : book.status === "failed"
+                          ? "Failed"
+                          : book.status}
                       </span>
                       {book.status === "ready" && (
                         <button
