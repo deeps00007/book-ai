@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_refresh_token: str = ""
 
+    github_token: str = ""
+    github_repo: str = "deeps00007/book-ai"
+
     class Config:
         env_file = ".env"
 

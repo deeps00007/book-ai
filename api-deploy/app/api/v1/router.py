@@ -20,6 +20,7 @@ from app.schemas import (
 from app.services.upload_service import save_uploaded_file, process_book
 from app.services.storage_service import upload_book_async
 from app.services import google_drive_service
+from app.services import github_trigger
 from app.services.rag_service import ask_book, ask_book_stream
 
 router = APIRouter()
@@ -214,10 +215,12 @@ async def upload_from_drive(
     await db.commit()
 
     if file_size and file_size > SMALL_FILE_LIMIT:
-        # Too large to process within the serverless limit — leave queued for the worker
+        # Too large to process within the serverless limit — leave queued for the worker,
+        # and kick the GitHub Actions worker NOW instead of waiting for the schedule.
+        await github_trigger.trigger_worker()
         return BookUploadResponse(
             book_id=book.id,
-            message="Uploaded. Queued for processing.",
+            message="Uploaded. Processing has started.",
             status="uploaded",
         )
 
