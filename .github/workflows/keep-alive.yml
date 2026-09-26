@@ -1,0 +1,17 @@
+name: Supabase Keep-Alive
+
+on:
+  schedule:
+    - cron: "0 6 */3 * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping database via live backend
+        run: |
+          echo "Pinging Supabase to prevent auto-pause..."
+          curl -s -f "https://bookai-api-three.vercel.app/dbcheck" || true
+          echo ""
+          echo "Keep-alive complete."

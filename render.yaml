@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: bookai-backend
+    runtime: python
+    buildCommand: cd backend && pip install -r requirements.txt
+    startCommand: cd backend && mkdir -p uploads && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: FIREWORKS_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: USE_SQLITE
+        value: "true"
+      - key: SQLITE_PATH
+        value: "/var/data/bookai.db"
+      - key: UPLOAD_DIR
+        value: "/var/data/uploads"
+      - key: ENVIRONMENT
+        value: production
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1

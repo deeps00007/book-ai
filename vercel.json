@@ -1,0 +1,12 @@
+{
+  "buildCommand": "npm install && npx next build",
+  "outputDirectory": ".next",
+  "framework": "nextjs",
+  "installCommand": "npm install",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/index"
+    }
+  ]
+}
