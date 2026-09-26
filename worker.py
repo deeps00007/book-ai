@@ -62,18 +62,30 @@ async def process_one(book_id: str):
         print(f"  -> downloading '{book.title}' from Drive...", flush=True)
         t0 = time.time()
 
-        if not (book.file_path and book.file_path.startswith("drive:")):
-            print("    (not a Drive book, skipping)", flush=True)
-            return
-        drive_id = book.file_path.split("drive:", 1)[1]
+        content = None
+        err = None
+        fp_src = book.file_path or ""
 
         try:
-            content = await google_drive_service.download_file(drive_id)
+            if fp_src.startswith("drive:"):
+                drive_id = fp_src.split("drive:", 1)[1]
+                content = await google_drive_service.download_file(drive_id)
+            elif fp_src.startswith("http://") or fp_src.startswith("https://"):
+                import httpx
+                async with httpx.AsyncClient(timeout=300, follow_redirects=True) as hc:
+                    rr = await hc.get(fp_src)
+                    rr.raise_for_status()
+                    content = rr.content
+            else:
+                err = "Unknown source"
         except Exception as e:
+            err = str(e)[:200]
+
+        if content is None:
             book.status = "failed"
-            book.error_message = f"Drive download failed: {str(e)[:200]}"
+            book.error_message = f"Download failed: {err}"
             await db.commit()
-            print(f"    download failed: {e}", flush=True)
+            print(f"    download failed: {err}", flush=True)
             return
 
         print(f"    {len(content)/1024/1024:.1f} MB in {time.time()-t0:.0f}s", flush=True)
