@@ -55,55 +55,33 @@ def extract_pages(file_path: str) -> list[dict]:
     return pages
 
 
-def detect_chapters(pages: list[dict], file_path: str) -> list[dict]:
-    """Best-effort chapter detection using large-font headings only.
+def detect_chapters(pages: list[dict], file_path: str = None) -> list[dict]:
+    """Best-effort chapter detection from the already-extracted page text.
 
-    Never used for chunk boundaries (chunking follows page order), only for
-    navigation labels. Falls back to a single 'Full Book' chapter.
+    Fast (no expensive layout calls). Only used for navigation labels —
+    chunk boundaries always follow page order. Falls back to 'Full Book'.
     """
     found = []
+    seen = set()
 
-    if HAS_FITZ:
-        try:
-            doc = fitz.open(file_path)
-            sizes = []
-            for page in doc:
-                for block in page.get_text("dict")["blocks"]:
-                    for line in block.get("lines", []):
-                        for span in line["spans"]:
-                            sizes.append(span["size"])
-            sizes.sort()
-            median = sizes[len(sizes) // 2] if sizes else 10.0
-            threshold = median * 1.35
-
-            current = None
-            for i in range(doc.page_count):
-                page = doc[i]
-                best = None
-                for block in page.get_text("dict")["blocks"]:
-                    for line in block.get("lines", []):
-                        line_text = "".join(s["text"] for s in line["spans"]).strip()
-                        if not line_text or len(line_text) > 90:
-                            continue
-                        max_size = max((s["size"] for s in line["spans"]), default=0)
-                        if max_size < threshold:
-                            continue
-                        for pat in CHAPTER_PATTERNS:
-                            if pat.match(line_text):
-                                if best is None or max_size > best[1]:
-                                    best = (line_text, max_size)
-                                break
-                if best and (current is None or best[0] != current[0]):
-                    found.append({"title": best[0], "page_number": i + 1})
-                    current = best
-            doc.close()
-        except Exception as e:
-            logger.warning(f"Chapter detection failed: {e}")
+    for p in pages:
+        lines = [ln.strip() for ln in p["text"].split("\n") if ln.strip()]
+        # a heading normally appears in the first few lines of a page
+        for line in lines[:6]:
+            if len(line) > 70:
+                continue
+            for pat in CHAPTER_PATTERNS:
+                if pat.match(line):
+                    key = (p["page"], line)
+                    if key not in seen:
+                        seen.add(key)
+                        found.append({"title": line, "page_number": p["page"]})
+                    break
 
     if not found:
         return [{"title": "Full Book", "page_number": 1}]
 
-    # dedupe consecutive / same page
+    # keep one per page, in page order
     merged = []
     for ch in found:
         if not merged or ch["page_number"] != merged[-1]["page_number"]:
@@ -184,16 +162,33 @@ async def process_book(
         await on_progress(10)
 
     chunk_texts = [c["text"] for c in all_chunks]
-    batch_size = 20
-    all_embeddings = []
+    batch_size = 10
+    batches = [chunk_texts[i : i + batch_size] for i in range(0, len(chunk_texts), batch_size)]
 
-    for i in range(0, len(chunk_texts), batch_size):
-        batch = chunk_texts[i : i + batch_size]
-        embeddings = await create_embeddings_batch(batch, user_id)
-        all_embeddings.extend(embeddings)
-        if on_progress:
-            progress = min(100, 10 + int((i + len(batch)) / max(len(chunk_texts), 1) * 90))
-            await on_progress(progress)
+    # Embed batches IN PARALLEL (bounded) — embeddings are network-bound, so
+    # running several at once cuts total time dramatically.
+    import asyncio as _asyncio
+    sem = _asyncio.Semaphore(6)
+    done = {"n": 0}
+
+    async def _embed(batch):
+        async with sem:
+            res = await create_embeddings_batch(batch, user_id)
+            done["n"] += len(batch)
+            if on_progress:
+                pct = min(100, 10 + int(done["n"] / max(len(chunk_texts), 1) * 90))
+                try:
+                    await on_progress(pct)
+                except Exception:
+                    pass
+            return res
+
+    results = await _asyncio.gather(*[_embed(b) for b in batches], return_exceptions=True)
+    all_embeddings = []
+    for r in results:
+        if isinstance(r, Exception):
+            raise r
+        all_embeddings.extend(r)
 
     for chunk, embedding in zip(all_chunks, all_embeddings):
         chunk["embedding"] = embedding
