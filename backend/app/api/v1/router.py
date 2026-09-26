@@ -204,7 +204,9 @@ async def upload_from_drive(
         pass  # single-user prototype, no school enforcement
 
     # Small files process inline (fast). Large files are queued for the worker.
-    SMALL_FILE_LIMIT = 35 * 1024 * 1024
+    # Only trivially small files process inline (Vercel has a 60s limit).
+    # Everything else is queued and picked up by the fast worker within ~30s.
+    SMALL_FILE_LIMIT = 5 * 1024 * 1024
 
     book = Book(
         user_id=user.id, title=title, author=author,
