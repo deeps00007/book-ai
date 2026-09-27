@@ -259,6 +259,18 @@ export async function getChatSessions(bookId: string) {
   return request(`/chat/sessions/${bookId}`);
 }
 
+export async function getUsageSummary(days = 30) {
+  return request(`/usage/summary?days=${days}`);
+}
+
+export async function getUsageDaily(days = 14) {
+  return request(`/usage/daily?days=${days}`);
+}
+
+export async function getUsageByModel(days = 30) {
+  return request(`/usage/by-model?days=${days}`);
+}
+
 export async function getSessionMessages(sessionId: string) {
   return request(`/chat/sessions/${sessionId}/messages`);
 }

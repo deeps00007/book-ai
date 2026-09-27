@@ -22,6 +22,7 @@ from app.services.storage_service import upload_book_async
 from app.services import google_drive_service
 from app.services import github_trigger
 from app.services import cache_service
+from app.services import usage_service
 from app.services.rag_service import ask_book, ask_book_stream
 
 router = APIRouter()
@@ -588,6 +589,12 @@ async def chat_with_book(
     ])
     await db.commit()
 
+    await usage_service.log_usage(
+        db, user.id, provider, model, "/chat",
+        tokens_in=tokens, tokens_out=0, response_time_ms=ms,
+        cached=(provider in ("cache", "cache-semantic")), book_id=req.book_id,
+    )
+
     return ChatResponse(
         answer=answer, session_id=session.id, sources=sources,
         provider=provider, model=model, tokens_used=tokens, response_time_ms=ms,
@@ -659,6 +666,10 @@ async def chat_with_book_stream(
                                     sources={"chunks": sources} if sources else None,
                                     provider="cache", model="cache"))
                 await sdb.commit()
+                await usage_service.log_usage(
+                    sdb, user_id, "cache", "cache", "/chat/stream",
+                    cached=True, book_id=book_id,
+                )
             yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'sources': sources, 'cached': True})}\n\n"
             return
 
@@ -677,9 +688,14 @@ async def chat_with_book_stream(
                 stream_db.add(ChatMessage(
                     session_id=session_id, role="assistant", content=full_response,
                     sources={"chunks": sources} if sources else None,
-                    provider="fireworks", model="deepseek-v4-pro",
+                    provider="fireworks", model="deepseek-v4p1-flash",
                 ))
                 await stream_db.commit()
+                await usage_service.log_usage(
+                    stream_db, user_id, "fireworks", "deepseek-v4p1-flash",
+                    "/chat/stream", tokens_out=len(full_response) // 4,
+                    book_id=book_id,
+                )
 
             await cache_service.store_cached(db, book_id, question, full_response,
                                              sources, chapter_id, user_id)

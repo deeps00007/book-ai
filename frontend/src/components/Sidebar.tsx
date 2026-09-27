@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
-import { BookOpen, LogOut, LayoutDashboard, Sparkles, FileText, Key } from "lucide-react";
+import { BookOpen, LogOut, LayoutDashboard, Sparkles, FileText, Key, BarChart3 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -18,6 +18,7 @@ export function Sidebar() {
     { icon: FileText, label: "Test Paper", path: "/test-paper" },
     { icon: Sparkles, label: "Generate", path: "/generate" },
     { icon: Key, label: "API Keys", path: "/api-keys" },
+    { icon: BarChart3, label: "Usage & Cost", path: "/usage" },
   ];
 
   return (
