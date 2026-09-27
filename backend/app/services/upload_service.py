@@ -37,7 +37,7 @@ def clean_text(text: str) -> str:
 
 
 def extract_pages(file_path: str) -> list[dict]:
-    """Return [{page: n, text: ...}] in reading order (1-indexed)."""
+    """Return [{page, text}] in reading order (1-indexed). Fast plain-text pass."""
     pages = []
     if HAS_FITZ:
         doc = fitz.open(file_path)
@@ -55,38 +55,122 @@ def extract_pages(file_path: str) -> list[dict]:
     return pages
 
 
+def _font_lines(file_path: str) -> list[dict]:
+    """Expensive layout pass returning per-page lines with font sizes."""
+    doc = fitz.open(file_path)
+    per_page = []
+    for i in range(doc.page_count):
+        lines = []
+        for b in doc[i].get_text("dict")["blocks"]:
+            for l in b.get("lines", []):
+                txt = "".join(s["text"] for s in l["spans"]).strip()
+                if not txt:
+                    continue
+                lines.append((txt, max((s["size"] for s in l["spans"]), default=0.0)))
+        per_page.append((i + 1, lines))
+    doc.close()
+    return per_page
+
+
 HEADING_RE = re.compile(
     r"^(CHAPTER|Chapter|UNIT|Unit|LESSON|Lesson|SECTION|Section|PART|Part|TOPIC|Topic)"
     r"\s+([0-9]{1,2}|[IVXLC]{1,5})\b\s*:?\s*(.*)$"
 )
 
 
-def detect_chapters(pages: list[dict], file_path: str = None) -> list[dict]:
-    """Best-effort chapter detection from the extracted page text (fast).
+# Headings that are not chapters (recurring page furniture).
+_SKIP_HEADING = re.compile(
+    r"^(learning objectives|learning checkpoints|key takeaways|check your progress|"
+    r"revision with concept map|activity|activities|exercises?|summary|introduction$|"
+    r"table of contents|contents|preface|foreword|index|appendix|glossary|"
+    r"questions?|practice|assignment|projects?|notes?|solutions?|"
+    r"rationalisation|textbook development|acknowledgements?|dedication|"
+    r"syllabus|note to|about the|title page|copyright|answers?)\b",
+    re.IGNORECASE,
+)
 
-    Skips table-of-contents pages (which mention many chapters) and picks
-    standalone headings like "CHAPTER 12 / ECOSYSTEM". Only used for
-    navigation labels — chunk boundaries always follow page order.
+
+def _detect_by_font(per_page: list) -> list[dict]:
+    """Chapter detection using font size — works across very different books.
+
+    `per_page` is [(page_number, [(line, size), ...])] from `_font_lines`.
+    A chapter start is a page whose largest heading is clearly bigger than the
+    body text (or a big standalone chapter number).
     """
-    found = []
+    all_sizes = [sz for _, lines in per_page for _, sz in lines]
+    if not all_sizes:
+        return []
 
-    for p in pages:
-        lines = [ln.strip() for ln in p["text"].split("\n") if ln.strip()]
-        mentions = [ln for ln in lines if HEADING_RE.match(ln)]
-        # A page naming 3+ chapters is a table of contents — not real starts.
-        if len(mentions) >= 3:
+    all_sizes.sort()
+    median = all_sizes[len(all_sizes) // 2]
+    if median <= 0:
+        return []
+    big = median * 1.7          # clearly-larger heading
+    huge = median * 3.0         # chapter-number marker
+
+    # Count how often each candidate heading appears — anything on many pages
+    # is a running header (e.g. "BIOLOGY"), not a chapter title.
+    from collections import Counter
+    freq = Counter()
+    page_candidates = []
+    for pnum, lines in per_page:
+        cands = [
+            (t, sz) for t, sz in lines
+            if 3 <= len(t) <= 70 and not t.isdigit() and not _SKIP_HEADING.match(t)
+        ]
+        page_candidates.append((pnum, lines, cands))
+        for t, _ in cands:
+            freq[t.lower().strip()] += 1
+
+    page_count = max(len(per_page), 1)
+    running = {t for t, n in freq.items() if n >= max(3, page_count * 0.2)}
+
+    found = []
+    for pnum, lines, cands in page_candidates:
+        # skip table-of-contents pages (name many chapters)
+        if sum(1 for t, _ in lines if HEADING_RE.match(t)) >= 3:
+            continue
+        cands = [c for c in cands if c[0].lower().strip() not in running]
+        if not cands:
             continue
 
+        has_number_marker = any(sz >= huge and t.isdigit() for t, sz in lines)
+        title, size = max(cands, key=lambda x: x[1])
+        if size < big and not has_number_marker:
+            continue
+        if size < median * 1.3:
+            continue
+
+        # prefix with an explicit "CHAPTER N" / "UNIT N" marker if present
+        marker = next((t for t, _ in lines if HEADING_RE.match(t) and len(t) <= 30), None)
+        if marker:
+            title = f"{marker.strip()}: {title}"
+
+        found.append({"title": title, "page_number": pnum})
+
+    # one per page, in page order
+    per_page_ch = []
+    for ch in found:
+        if not per_page_ch or ch["page_number"] != per_page_ch[-1]["page_number"]:
+            per_page_ch.append(ch)
+    return per_page_ch
+
+
+def _detect_from_text(pages: list[dict]) -> list[dict]:
+    """Text-pattern fallback (no font info available, e.g. pypdf)."""
+    found = []
+    for p in pages:
+        lines = [ln.strip() for ln in p["text"].split("\n") if ln.strip()]
+        if sum(1 for ln in lines if HEADING_RE.match(ln)) >= 3:
+            continue
         for i, line in enumerate(lines):
             if len(line) > 90:
                 continue
             m = HEADING_RE.match(line)
             if not m:
                 continue
-
             keyword, num, tail = m.group(1), m.group(2), m.group(3).strip()
             title = f"{keyword} {num}"
-            # prefer a title on the same line, else the next ALL-CAPS line
             if tail and 3 <= len(tail) <= 70:
                 title = f"{keyword} {num}: {tail[:70]}"
             elif i + 1 < len(lines):
@@ -95,30 +179,52 @@ def detect_chapters(pages: list[dict], file_path: str = None) -> list[dict]:
                     title = f"{keyword} {num}: {nxt.title()}"
             found.append({"title": title, "page_number": p["page"]})
             break
+    return found
+
+
+def detect_chapters(pages: list[dict], file_path: str = None) -> list[dict]:
+    """Detect chapters for navigation (chunk boundaries always follow page order).
+
+    Runs the cheap text-pattern detector first; only if it finds few chapters
+    do we pay for the expensive font-size layout pass (handles books that use
+    style rather than "CHAPTER N" text, e.g. Chemistry).
+    """
+    text_found = _detect_from_text(pages)
+    if len(text_found) >= 3:
+        found = text_found
+    else:
+        font_found = []
+        if HAS_FITZ and file_path:
+            try:
+                font_found = _detect_by_font(_font_lines(file_path))
+            except Exception as e:
+                logger.warning(f"font chapter detection failed: {e}")
+        found = font_found if len(font_found) > len(text_found) else text_found
 
     if len(found) <= 1:
         return [{"title": "Full Book", "page_number": 1}]
 
-    # one per page, in page order
-    per_page = []
-    for ch in found:
-        if not per_page or ch["page_number"] != per_page[-1]["page_number"]:
-            per_page.append(ch)
-
-    # drop bare duplicates ("Chapter 9" vs "CHAPTER 9: Biotechnology")
+    # dedupe: by chapter/unit number when present (so a bare divider page
+    # "Chapter 9" collapses into "CHAPTER 9: Biotechnology ..."), else by title.
     seen = {}
-    deduped = []
-    for ch in per_page:
-        m = HEADING_RE.match(ch["title"])
-        key = f"{m.group(1).lower()} {m.group(2)}" if m else ch["title"].lower()
+    out = []
+    for ch in found:
+        m = re.match(r"^(?:chapter|unit)\s+(\d+)", ch["title"], re.IGNORECASE)
+        key = f"ch:{m.group(1)}" if m else ch["title"].lower().strip()
         if key in seen:
             idx = seen[key]
-            if len(ch["title"]) > len(deduped[idx]["title"]):
-                deduped[idx] = ch
+            keep = out[idx]
+            out[idx] = {
+                "title": ch["title"] if len(ch["title"]) > len(keep["title"]) else keep["title"],
+                "page_number": min(ch["page_number"], keep["page_number"]),
+            }
         else:
-            seen[key] = len(deduped)
-            deduped.append(ch)
-    return deduped
+            seen[key] = len(out)
+            out.append(ch)
+
+    # final guard: sort by page, cap
+    out.sort(key=lambda c: c["page_number"])
+    return out[:40]
 
 
 def chunk_pages(pages: list[dict], chunk_words: int = None, overlap_words: int = None) -> list[dict]:
