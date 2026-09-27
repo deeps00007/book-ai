@@ -219,6 +219,11 @@ Load chunks (book / chapter scoped)          │
 Hybrid score → proximity boost around anchor │
      │                                        │
      ▼                                        │
+Cross-encoder rerank (qwen3-reranker-8b)      │
+  · skipped when the question is anchored     │
+  · scores the top ~12 candidates in ~1s      │
+     │                                        │
+     ▼                                        │
 Build prompt with labelled context:          │
   [LOCAL CONTEXT]  (chunks near the question)│
   [OTHER CONTEXT]  (background)              │
@@ -226,6 +231,14 @@ Build prompt with labelled context:          │
      ▼                                        ▼
 LLM answer grounded in the local context
 ```
+
+**Two-level answer cache** (checked before any LLM call):
+- **exact** — normalised text match.
+- **semantic** — embedding similarity ≥ 0.93, so paraphrases like
+  *"What is an ecosystem?"* and *"define ecosystem"* share one answer.
+
+Measured: a paraphrase returned in **8.8 s with 0 tokens** (vs a fresh
+**~30 s / 5–7 k tokens** answer).
 
 **Why it matters:** a naive RAG answers "What did Lencho hope for?" with
 *"he hoped for help from God"* (a similar phrase later in the story). Our
