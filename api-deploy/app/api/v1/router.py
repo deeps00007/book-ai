@@ -562,6 +562,8 @@ async def chat_with_book(
 
     # 1) Try the cache (no tokens spent)
     cached = await cache_service.get_cached(db, req.book_id, req.question, req.chapter_id)
+    if not cached:
+        cached = await cache_service.get_cached_semantic(db, req.book_id, req.question, user.id)
 
     if cached:
         answer, sources, provider, model, tokens, ms = (
@@ -575,7 +577,7 @@ async def chat_with_book(
         )
         tokens, ms = response.tokens_used, response.response_time_ms
         await cache_service.store_cached(db, req.book_id, req.question, answer,
-                                         sources, req.chapter_id)
+                                         sources, req.chapter_id, user.id)
 
     db.add_all([
         ChatMessage(session_id=session.id, role="user", content=req.question),
@@ -628,6 +630,8 @@ async def chat_with_book_stream(
 
     # Cache check — if we already answered this, stream it back instantly (0 tokens)
     cached = await cache_service.get_cached(db, req.book_id, req.question, req.chapter_id)
+    if not cached:
+        cached = await cache_service.get_cached_semantic(db, req.book_id, req.question, user.id)
 
     db.add(ChatMessage(session_id=session.id, role="user", content=req.question))
     await db.commit()
@@ -678,7 +682,7 @@ async def chat_with_book_stream(
                 await stream_db.commit()
 
             await cache_service.store_cached(db, book_id, question, full_response,
-                                             sources, chapter_id)
+                                             sources, chapter_id, user_id)
             yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'sources': sources})}\n\n"
         except Exception as e:
             logger.error(f"Stream error: {e}")

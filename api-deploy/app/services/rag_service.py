@@ -174,19 +174,28 @@ async def retrieve_relevant_chunks(
 
     scored.sort(key=lambda c: c["score"], reverse=True)
 
-    # Ensure anchor neighbors in top_k
+    # Build a generous candidate pool (question-anchor neighbours first).
     if question_anchor_idx is not None:
         neighbors = [s for s in scored if abs(s["chunk_index"] - question_anchor_idx) <= 2]
         others = [s for s in scored if abs(s["chunk_index"] - question_anchor_idx) > 2]
         seen = set()
-        final = []
+        pool = []
         for s in neighbors + others:
             if s["id"] not in seen:
                 seen.add(s["id"])
-                final.append(s)
-        return final[:top_k]
+                pool.append(s)
+    else:
+        pool = scored
 
-    return scored[:top_k]
+    pool = pool[:12]
+
+    # If we found the exact question in the book, the local context is already
+    # reliable — skip the (slow) LLM rerank. Only rerank ambiguous retrievals.
+    if question_anchor_idx is not None:
+        return pool[:top_k]
+
+    from app.services import rerank_service
+    return await rerank_service.rerank(query, pool, user_id=user_id, top_k=top_k)
 
 
 def build_rag_prompt(query: str, chunks: list[dict], chat_history: list[dict] = None) -> list[dict]:
@@ -214,10 +223,11 @@ def build_rag_prompt(query: str, chunks: list[dict], chat_history: list[dict] = 
         elif anchor_idx is not None:
             lbl += " ← OTHER CONTEXT (further away)"
 
+        body = (c.get("content") or "")[:1800]
         if in_local:
-            local_parts.append(f"{lbl}: {c['content']}")
+            local_parts.append(f"{lbl}: {body}")
         else:
-            other_parts.append(f"{lbl}: {c['content']}")
+            other_parts.append(f"{lbl}: {body}")
 
     context = ""
     if local_parts:

@@ -185,6 +185,7 @@ class AnswerCache(Base):
     question: Mapped[str] = mapped_column(Text, nullable=False)
     answer: Mapped[str] = mapped_column(Text, nullable=False)
     sources: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    embedding_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     hits: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
