@@ -439,9 +439,20 @@ cost, latency, **cached** flag, book). The dashboard at `/usage` shows:
 
 Endpoints: `GET /usage/summary`, `GET /usage/daily`, `GET /usage/by-model`.
 
-Pricing lives in `backend/app/services/usage_service.py` (`PRICES`, USD per 1M
-tokens) — update it to match your provider rates. Cached answers are recorded
-with cost 0.
+**What is tracked (and how accurate it is):**
+
+| Data | Source | Accuracy |
+|---|---|---|
+| Requests, cache hits | counted | **exact** |
+| Tokens in/out (chat, non-stream + stream) | provider `usage` (`stream_options.include_usage`) | **exact** |
+| Embeddings | counted per batch (tokens ≈ chars/4) | token count **estimated**, request count exact |
+| Rerank | counted per call (tokens ≈ chars/4) | token count **estimated**, request count exact |
+| Generate / test-paper | provider `usage` | **exact** |
+| Cost | `PRICES` table × tokens | **estimate**, not the provider's invoice |
+
+**Cost is an estimate.** To make it exact, replace `PRICES` in
+`backend/app/services/usage_service.py` with your real per-1M-token rates, or
+reconcile totals against the provider's billing dashboard monthly.
 
 ## 15. Cost control
 
