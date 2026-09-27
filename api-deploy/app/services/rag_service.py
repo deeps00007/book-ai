@@ -84,8 +84,13 @@ def _is_likely_question(text: str) -> bool:
 async def retrieve_relevant_chunks(
     db: AsyncSession, book_id: str, query: str,
     top_k: int = 5, chapter_id: str = None, user_id: str = None,
+    query_embedding: list[float] = None,
 ) -> list[dict]:
-    query_embedding = await create_embedding(query, user_id)
+    import time as _t
+    _t0 = _t.time()
+    if query_embedding is None:
+        query_embedding = await create_embedding(query, user_id)
+    _t1 = _t.time()
     query_lower = query.lower().rstrip("?").strip()
     is_question = _is_likely_question(query)
     qtokens = _tokenize(query)
@@ -96,6 +101,7 @@ async def retrieve_relevant_chunks(
         conds.append(BookChunk.chapter_id == chapter_id)
     result = await db.execute(select(BookChunk).where(*conds))
     all_chunks = result.scalars().all()
+    logger.info(f"[rag] embed={(_t1-_t0)*1000:.0f}ms load={(_t.time()-_t1)*1000:.0f}ms chunks={len(all_chunks)}")
 
     # Phase 1: Fast vector scoring + question anchoring on all chunks
     vector_scored = []
@@ -195,7 +201,10 @@ async def retrieve_relevant_chunks(
         return pool[:top_k]
 
     from app.services import rerank_service
-    return await rerank_service.rerank(query, pool, user_id=user_id, top_k=top_k)
+    _tr = _t.time()
+    out = await rerank_service.rerank(query, pool, user_id=user_id, top_k=top_k)
+    logger.info(f"[rag] rerank={(_t.time()-_tr)*1000:.0f}ms")
+    return out
 
 
 def build_rag_prompt(query: str, chunks: list[dict], chat_history: list[dict] = None) -> list[dict]:
@@ -264,10 +273,11 @@ def _fmt(h: list[dict]) -> str:
 async def ask_book(
     db: AsyncSession, book_id: str, question: str,
     chat_history: list[dict] = None, chapter_id: str = None,
-    user_id: str = None,
+    user_id: str = None, query_embedding: list[float] = None,
 ) -> LLMResponse:
     chunks = await retrieve_relevant_chunks(
         db, book_id, question, top_k=5, chapter_id=chapter_id, user_id=user_id,
+        query_embedding=query_embedding,
     )
     messages = build_rag_prompt(question, chunks, chat_history)
     response = await llm_gateway.chat(
@@ -282,10 +292,11 @@ async def ask_book(
 async def ask_book_stream(
     db: AsyncSession, book_id: str, question: str,
     chat_history: list[dict] = None, chapter_id: str = None,
-    user_id: str = None,
+    user_id: str = None, query_embedding: list[float] = None,
 ):
     chunks = await retrieve_relevant_chunks(
         db, book_id, question, top_k=5, chapter_id=chapter_id, user_id=user_id,
+        query_embedding=query_embedding,
     )
     messages = build_rag_prompt(question, chunks, chat_history)
     stream = llm_gateway.chat_stream(

@@ -24,7 +24,7 @@ PROVIDER_CONFIG = {
     Provider.FIREWORKS: {
         "api_key": (settings.fireworks_api_key or "").strip(),
         "base_url": (settings.fireworks_base_url or "").strip(),
-        "default_model": "accounts/fireworks/models/deepseek-v4p1-flash",
+        "default_model": "accounts/fireworks/models/minimax-m3",
     },
     Provider.OPENAI: {
         "api_key": (settings.openai_api_key or "").strip(),

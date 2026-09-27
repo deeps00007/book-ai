@@ -55,38 +55,70 @@ def extract_pages(file_path: str) -> list[dict]:
     return pages
 
 
-def detect_chapters(pages: list[dict], file_path: str = None) -> list[dict]:
-    """Best-effort chapter detection from the already-extracted page text.
+HEADING_RE = re.compile(
+    r"^(CHAPTER|Chapter|UNIT|Unit|LESSON|Lesson|SECTION|Section|PART|Part|TOPIC|Topic)"
+    r"\s+([0-9]{1,2}|[IVXLC]{1,5})\b\s*:?\s*(.*)$"
+)
 
-    Fast (no expensive layout calls). Only used for navigation labels —
-    chunk boundaries always follow page order. Falls back to 'Full Book'.
+
+def detect_chapters(pages: list[dict], file_path: str = None) -> list[dict]:
+    """Best-effort chapter detection from the extracted page text (fast).
+
+    Skips table-of-contents pages (which mention many chapters) and picks
+    standalone headings like "CHAPTER 12 / ECOSYSTEM". Only used for
+    navigation labels — chunk boundaries always follow page order.
     """
     found = []
-    seen = set()
 
     for p in pages:
         lines = [ln.strip() for ln in p["text"].split("\n") if ln.strip()]
-        # a heading normally appears in the first few lines of a page
-        for line in lines[:6]:
-            if len(line) > 70:
-                continue
-            for pat in CHAPTER_PATTERNS:
-                if pat.match(line):
-                    key = (p["page"], line)
-                    if key not in seen:
-                        seen.add(key)
-                        found.append({"title": line, "page_number": p["page"]})
-                    break
+        mentions = [ln for ln in lines if HEADING_RE.match(ln)]
+        # A page naming 3+ chapters is a table of contents — not real starts.
+        if len(mentions) >= 3:
+            continue
 
-    if not found:
+        for i, line in enumerate(lines):
+            if len(line) > 90:
+                continue
+            m = HEADING_RE.match(line)
+            if not m:
+                continue
+
+            keyword, num, tail = m.group(1), m.group(2), m.group(3).strip()
+            title = f"{keyword} {num}"
+            # prefer a title on the same line, else the next ALL-CAPS line
+            if tail and 3 <= len(tail) <= 70:
+                title = f"{keyword} {num}: {tail[:70]}"
+            elif i + 1 < len(lines):
+                nxt = lines[i + 1]
+                if nxt.isupper() and 3 <= len(nxt) <= 70:
+                    title = f"{keyword} {num}: {nxt.title()}"
+            found.append({"title": title, "page_number": p["page"]})
+            break
+
+    if len(found) <= 1:
         return [{"title": "Full Book", "page_number": 1}]
 
-    # keep one per page, in page order
-    merged = []
+    # one per page, in page order
+    per_page = []
     for ch in found:
-        if not merged or ch["page_number"] != merged[-1]["page_number"]:
-            merged.append(ch)
-    return merged
+        if not per_page or ch["page_number"] != per_page[-1]["page_number"]:
+            per_page.append(ch)
+
+    # drop bare duplicates ("Chapter 9" vs "CHAPTER 9: Biotechnology")
+    seen = {}
+    deduped = []
+    for ch in per_page:
+        m = HEADING_RE.match(ch["title"])
+        key = f"{m.group(1).lower()} {m.group(2)}" if m else ch["title"].lower()
+        if key in seen:
+            idx = seen[key]
+            if len(ch["title"]) > len(deduped[idx]["title"]):
+                deduped[idx] = ch
+        else:
+            seen[key] = len(deduped)
+            deduped.append(ch)
+    return deduped
 
 
 def chunk_pages(pages: list[dict], chunk_words: int = None, overlap_words: int = None) -> list[dict]:

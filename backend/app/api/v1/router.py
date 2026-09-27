@@ -561,10 +561,23 @@ async def chat_with_book(
     if not prior and (not session.title or session.title == "New Chat"):
         session.title = req.question[:60]
 
-    # 1) Try the cache (no tokens spent)
+    import time as _t
+    _t0 = _t.time()
     cached = await cache_service.get_cached(db, req.book_id, req.question, req.chapter_id)
+    _t1 = _t.time()
+
+    # Compute the query embedding ONCE and reuse it for both the semantic
+    # cache check and retrieval (avoids a duplicate embedding call).
+    q_emb = None
     if not cached:
-        cached = await cache_service.get_cached_semantic(db, req.book_id, req.question, user.id)
+        from app.services.embedding_service import create_embedding
+        try:
+            q_emb = await create_embedding(req.question, user.id, endpoint="embedding:query")
+            cached = await cache_service.get_cached_semantic(
+                db, req.book_id, req.question, user.id, query_embedding=q_emb)
+        except Exception:
+            q_emb = None
+    _t2 = _t.time()
 
     tokens_in = tokens_out = 0
     if cached:
@@ -573,14 +586,17 @@ async def chat_with_book(
         )
     else:
         response = await ask_book(db, req.book_id, req.question, chat_history,
-                                  chapter_id=req.chapter_id, user_id=user.id)
+                                  chapter_id=req.chapter_id, user_id=user.id,
+                                  query_embedding=q_emb)
         answer, sources, provider, model = (
             response.content, response.sources, response.provider, response.model
         )
         tokens, ms = response.tokens_used, response.response_time_ms
         tokens_in, tokens_out = response.tokens_in, response.tokens_out
         await cache_service.store_cached(db, req.book_id, req.question, answer,
-                                         sources, req.chapter_id, user.id)
+                                         sources, req.chapter_id, user.id,
+                                         query_embedding=q_emb)
+    logger.info(f"[chat] cache exact={(_t1-_t0)*1000:.0f}ms semantic={(_t2-_t1)*1000:.0f}ms answer={(_t.time()-_t2)*1000:.0f}ms")
 
     db.add_all([
         ChatMessage(session_id=session.id, role="user", content=req.question),
@@ -639,8 +655,15 @@ async def chat_with_book_stream(
 
     # Cache check — if we already answered this, stream it back instantly (0 tokens)
     cached = await cache_service.get_cached(db, req.book_id, req.question, req.chapter_id)
+    q_emb = None
     if not cached:
-        cached = await cache_service.get_cached_semantic(db, req.book_id, req.question, user.id)
+        from app.services.embedding_service import create_embedding
+        try:
+            q_emb = await create_embedding(req.question, user.id, endpoint="embedding:query")
+            cached = await cache_service.get_cached_semantic(
+                db, req.book_id, req.question, user.id, query_embedding=q_emb)
+        except Exception:
+            q_emb = None
 
     db.add(ChatMessage(session_id=session.id, role="user", content=req.question))
     await db.commit()
@@ -651,6 +674,7 @@ async def chat_with_book_stream(
     chapter_id = req.chapter_id
     user_id = user.id
     history_snapshot = list(chat_history)
+    query_embedding = q_emb
 
     async def event_stream():
         full_response = ""
@@ -681,6 +705,7 @@ async def chat_with_book_stream(
                 async for chunk in ask_book_stream(
                     stream_db, book_id, question, history_snapshot,
                     chapter_id=chapter_id, user_id=user_id,
+                    query_embedding=query_embedding,
                 ):
                     if chunk.get("__sources__"):
                         sources = chunk.get("sources")
@@ -693,14 +718,14 @@ async def chat_with_book_stream(
                 stream_db.add(ChatMessage(
                     session_id=session_id, role="assistant", content=full_response,
                     sources={"chunks": sources} if sources else None,
-                    provider="fireworks", model="deepseek-v4p1-flash",
+                    provider="fireworks", model="minimax-m3",
                 ))
                 await stream_db.commit()
 
                 await usage_service.log_usage(
                     stream_db, user_id,
                     (usage_info or {}).get("provider", "fireworks"),
-                    (usage_info or {}).get("model", "deepseek-v4p1-flash"),
+                    (usage_info or {}).get("model", "minimax-m3"),
                     "/chat/stream",
                     tokens_in=(usage_info or {}).get("tokens_in", 0),
                     tokens_out=(usage_info or {}).get("tokens_out", len(full_response) // 4),
@@ -708,7 +733,8 @@ async def chat_with_book_stream(
                 )
 
             await cache_service.store_cached(db, book_id, question, full_response,
-                                             sources, chapter_id, user_id)
+                                             sources, chapter_id, user_id,
+                                             query_embedding=query_embedding)
             yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'sources': sources})}\n\n"
         except Exception as e:
             logger.error(f"Stream error: {e}")

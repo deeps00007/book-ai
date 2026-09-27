@@ -20,6 +20,20 @@ async def create_embedding(text: str, user_id: str = None, endpoint: str = "embe
     return embeddings[0]
 
 
+# Cache OpenAI clients by key so we don't rebuild them on every call.
+_CLIENTS: dict[str, AsyncOpenAI] = {}
+
+
+def _client_for(key: str) -> AsyncOpenAI:
+    c = _CLIENTS.get(key)
+    if c is None:
+        # max_retries=0: fail fast on a 503 so the key pool can try another key
+        # immediately instead of waiting ~5s on the SDK's backoff.
+        c = AsyncOpenAI(api_key=key, base_url=(settings.fireworks_base_url or "").strip(), max_retries=0, timeout=15)
+        _CLIENTS[key] = c
+    return c
+
+
 async def create_embeddings_batch(texts: list[str], user_id: str = None, endpoint: str = "embedding") -> list[list[float]]:
     pool_keys = []
     try:
@@ -28,16 +42,16 @@ async def create_embeddings_batch(texts: list[str], user_id: str = None, endpoin
     except Exception:
         pass
 
-    keys_to_try = pool_keys if pool_keys else [{"id": None, "api_key": settings.fireworks_api_key, "label": "default"}]
+    keys_to_try = pool_keys if pool_keys else [{"id": None, "api_key": (settings.fireworks_api_key or "").strip(), "label": "default"}]
 
     last_error = None
 
     for entry in keys_to_try:
-        key = entry["api_key"]
+        key = (entry.get("api_key") or "").strip()
         kid = entry.get("id")
 
         try:
-            client = AsyncOpenAI(api_key=key, base_url=settings.fireworks_base_url)
+            client = _client_for(key)
             result = await _try_embedding(client, texts)
 
             if kid:

@@ -38,10 +38,10 @@ class Settings(BaseSettings):
     chunk_size: int = 500
     chunk_overlap: int = 80
 
-    default_llm_model: str = "accounts/fireworks/models/deepseek-v4p1-flash"
+    default_llm_model: str = "accounts/fireworks/models/minimax-m3"
     default_llm_provider: str = "fireworks"
     temperature: float = 0.2
-    max_tokens: int = 4096
+    max_tokens: int = 1600
 
     environment: str = "development"
 

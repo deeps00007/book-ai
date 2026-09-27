@@ -29,13 +29,13 @@ async def _pool_keys(user_id: str = None) -> list[dict]:
 
 
 async def rerank(question: str, candidates: list[dict], user_id: str = None,
-                 top_k: int = 5, max_candidates: int = 12) -> list[dict]:
+                 top_k: int = 5, max_candidates: int = 8) -> list[dict]:
     """Return the top_k candidates reordered by relevance, best first."""
     if len(candidates) <= top_k:
         return candidates
 
     pool = candidates[:max_candidates]
-    documents = [(c.get("content") or "").replace("\n", " ").strip()[:1500] for c in pool]
+    documents = [(c.get("content") or "").replace("\n", " ").strip()[:900] for c in pool]
 
     for entry in await _pool_keys(user_id):
         key = (entry.get("api_key") or "").strip()

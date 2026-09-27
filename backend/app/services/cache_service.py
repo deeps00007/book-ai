@@ -70,13 +70,29 @@ async def get_cached(db: AsyncSession, book_id: str, question: str, chapter_id: 
 
 
 async def get_cached_semantic(db: AsyncSession, book_id: str, question: str,
-                              user_id: str = None, threshold: float = SIMILARITY_THRESHOLD):
+                              user_id: str = None, threshold: float = SIMILARITY_THRESHOLD,
+                              query_embedding: list[float] = None):
     """Near-duplicate match via embedding similarity."""
+    # Only pay for an embedding if this book actually has cached answers.
     try:
-        from app.services.embedding_service import create_embedding
-        q_emb = await create_embedding(question, user_id)
+        n = await db.execute(
+            select(AnswerCache.id).where(
+                AnswerCache.book_id == book_id,
+                AnswerCache.embedding_json.isnot(None),
+            ).limit(1)
+        )
+        if n.first() is None:
+            return None
     except Exception:
         return None
+
+    q_emb = query_embedding
+    if q_emb is None:
+        try:
+            from app.services.embedding_service import create_embedding
+            q_emb = await create_embedding(question, user_id, endpoint="embedding:cache")
+        except Exception:
+            return None
 
     result = await db.execute(
         select(AnswerCache).where(
@@ -110,7 +126,8 @@ async def get_cached_semantic(db: AsyncSession, book_id: str, question: str,
 
 
 async def store_cached(db: AsyncSession, book_id: str, question: str, answer: str,
-                       sources: list = None, chapter_id: str = None, user_id: str = None):
+                       sources: list = None, chapter_id: str = None, user_id: str = None,
+                       query_embedding: list[float] = None):
     norm = normalize(question)
     if not norm or not answer:
         return
@@ -125,12 +142,15 @@ async def store_cached(db: AsyncSession, book_id: str, question: str, answer: st
             return
 
         emb_json = None
-        try:
-            from app.services.embedding_service import create_embedding
-            emb = await create_embedding(question, user_id)
-            emb_json = json.dumps(emb)
-        except Exception:
-            pass
+        if query_embedding is not None:
+            emb_json = json.dumps(query_embedding)
+        else:
+            try:
+                from app.services.embedding_service import create_embedding
+                emb = await create_embedding(question, user_id, endpoint="embedding:store")
+                emb_json = json.dumps(emb)
+            except Exception:
+                pass
 
         db.add(AnswerCache(
             book_id=book_id,
