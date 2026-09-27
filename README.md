@@ -428,6 +428,21 @@ Triggering instantly removed a 10-minute wait; end-to-end upload → ready is no
 
 ---
 
+## Usage & cost dashboard
+
+Every AI call is logged to `api_usage_logs` (provider, model, tokens in/out,
+cost, latency, **cached** flag, book). The dashboard at `/usage` shows:
+
+- **AI requests**, **cache hits** + hit-rate, **tokens**, **estimated cost**
+  (USD + INR), **savings from caching**, **average response time**
+- a **daily cost chart** and a **per-model breakdown**
+
+Endpoints: `GET /usage/summary`, `GET /usage/daily`, `GET /usage/by-model`.
+
+Pricing lives in `backend/app/services/usage_service.py` (`PRICES`, USD per 1M
+tokens) — update it to match your provider rates. Cached answers are recorded
+with cost 0.
+
 ## 15. Cost control
 
 | Lever | Effect |
@@ -438,7 +453,7 @@ Triggering instantly removed a 10-minute wait; end-to-end upload → ready is no
 | Key pool + failover | Never pay for a dead key |
 | Cheap embedding model | Low embedding cost |
 | GitHub Actions + Vercel + Supabase free tiers | **₹0 infrastructure** for the prototype |
-| `api_usage_logs` | Tracks tokens/cost per request |
+| `api_usage_logs` | Per-request tokens, cost, latency, cache flag |
 
 ---
 
