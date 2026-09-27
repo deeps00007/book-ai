@@ -104,6 +104,13 @@ Respond ONLY with valid JSON. No markdown, no explanations."""
         user_id=user.id,
     )
 
+    from app.services import usage_service
+    await usage_service.log_usage(
+        db, user.id, response.provider, response.model, "/generate",
+        tokens_in=response.tokens_in, tokens_out=response.tokens_out,
+        response_time_ms=response.response_time_ms, book_id=req.book_id,
+    )
+
     try:
         content_json = json.loads(response.content)
     except json.JSONDecodeError:

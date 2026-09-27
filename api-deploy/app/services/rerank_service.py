@@ -65,6 +65,16 @@ async def rerank(question: str, candidates: list[dict], user_id: str = None,
                     c["rerank_score"] = item.get("relevance_score", 0.0)
                     ranked.append(c)
             if ranked:
+                if user_id:
+                    try:
+                        from app.services import usage_service
+                        async with async_session() as sdb:
+                            await usage_service.log_usage(
+                                sdb, user_id, "fireworks", RERANK_MODEL, "rerank",
+                                tokens_in=sum(len(d) // 4 for d in documents), tokens_out=0,
+                            )
+                    except Exception:
+                        pass
                 # append a couple of unranked candidates as extra context
                 chosen_ids = {c.get("id") for c in ranked}
                 extras = [c for c in candidates if c.get("id") not in chosen_ids]

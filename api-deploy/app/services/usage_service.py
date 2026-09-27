@@ -23,6 +23,7 @@ PRICES = {
     "kimi-k3": (0.60, 2.50),
     "minimax-m3": (0.30, 1.20),
     "nomic-ai/nomic-embed-text-v1.5": (0.02, 0.0),
+    "qwen3-reranker-8b": (0.05, 0.0),
 }
 DEFAULT_PRICE = (0.20, 0.80)
 

@@ -46,6 +46,8 @@ class LLMResponse:
     model: str
     tokens_used: int
     response_time_ms: int
+    tokens_in: int = 0
+    tokens_out: int = 0
     sources: list[dict] = field(default_factory=list)
 
 
@@ -140,6 +142,8 @@ class LLMGateway:
                     model=actual_model,
                     tokens_used=response.usage.total_tokens if response.usage else 0,
                     response_time_ms=elapsed,
+                    tokens_in=(getattr(response.usage, "prompt_tokens", 0) if response.usage else 0),
+                    tokens_out=(getattr(response.usage, "completion_tokens", 0) if response.usage else 0),
                 )
             except Exception as e:
                 err_msg = str(e)[:200]
@@ -186,6 +190,8 @@ class LLMGateway:
                     model=actual_model,
                     tokens_used=response.usage.total_tokens if response.usage else 0,
                     response_time_ms=elapsed,
+                    tokens_in=(getattr(response.usage, "prompt_tokens", 0) if response.usage else 0),
+                    tokens_out=(getattr(response.usage, "completion_tokens", 0) if response.usage else 0),
                 )
             except Exception as e:
                 last_error = e
@@ -215,11 +221,21 @@ class LLMGateway:
                         client = AsyncOpenAI(api_key=entry["api_key"], base_url=(settings.fireworks_base_url or "").strip())
                         actual_model = model or PROVIDER_CONFIG[Provider.FIREWORKS]["default_model"]
                         stream = await client.chat.completions.create(
-                            model=actual_model, messages=messages, temperature=temp, max_tokens=max_tok, stream=True)
+                            model=actual_model, messages=messages, temperature=temp, max_tokens=max_tok, stream=True,
+                            stream_options={"include_usage": True})
+                        _usage = None
                         async for chunk in stream:
+                            if getattr(chunk, "usage", None):
+                                _usage = chunk.usage
                             delta = chunk.choices[0].delta if chunk.choices else None
                             if delta and delta.content:
                                 yield {"content": delta.content, "provider": Provider.FIREWORKS.value, "model": actual_model}
+                        if _usage:
+                            yield {"__usage__": {
+                                "provider": Provider.FIREWORKS.value, "model": actual_model,
+                                "tokens_in": getattr(_usage, "prompt_tokens", 0) or 0,
+                                "tokens_out": getattr(_usage, "completion_tokens", 0) or 0,
+                            }}
                         if entry.get("id"):
                             try:
                                 await mark_key_active(entry["id"])
@@ -250,17 +266,30 @@ class LLMGateway:
         actual_model = model or config["default_model"]
 
         try:
-            stream = await client.chat.completions.create(
-                model=actual_model,
-                messages=messages,
-                temperature=temp,
-                max_tokens=max_tok,
-                stream=True,
-            )
+            try:
+                stream = await client.chat.completions.create(
+                    model=actual_model, messages=messages, temperature=temp,
+                    max_tokens=max_tok, stream=True,
+                    stream_options={"include_usage": True},
+                )
+            except Exception:
+                stream = await client.chat.completions.create(
+                    model=actual_model, messages=messages, temperature=temp,
+                    max_tokens=max_tok, stream=True,
+                )
+            _usage = None
             async for chunk in stream:
+                if getattr(chunk, "usage", None):
+                    _usage = chunk.usage
                 delta = chunk.choices[0].delta if chunk.choices else None
                 if delta and delta.content:
                     yield {"content": delta.content, "provider": prov.value, "model": actual_model}
+            if _usage:
+                yield {"__usage__": {
+                    "provider": prov.value, "model": actual_model,
+                    "tokens_in": getattr(_usage, "prompt_tokens", 0) or 0,
+                    "tokens_out": getattr(_usage, "completion_tokens", 0) or 0,
+                }}
         except Exception as e:
             self._mark_failed(prov.value)
             raise

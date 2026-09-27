@@ -566,6 +566,7 @@ async def chat_with_book(
     if not cached:
         cached = await cache_service.get_cached_semantic(db, req.book_id, req.question, user.id)
 
+    tokens_in = tokens_out = 0
     if cached:
         answer, sources, provider, model, tokens, ms = (
             cached["answer"], cached["sources"], "cache", "cache", 0, 0
@@ -577,6 +578,7 @@ async def chat_with_book(
             response.content, response.sources, response.provider, response.model
         )
         tokens, ms = response.tokens_used, response.response_time_ms
+        tokens_in, tokens_out = response.tokens_in, response.tokens_out
         await cache_service.store_cached(db, req.book_id, req.question, answer,
                                          sources, req.chapter_id, user.id)
 
@@ -591,7 +593,7 @@ async def chat_with_book(
 
     await usage_service.log_usage(
         db, user.id, provider, model, "/chat",
-        tokens_in=tokens, tokens_out=0, response_time_ms=ms,
+        tokens_in=tokens_in, tokens_out=tokens_out, response_time_ms=ms,
         cached=(provider in ("cache", "cache-semantic")), book_id=req.book_id,
     )
 
@@ -673,6 +675,7 @@ async def chat_with_book_stream(
             yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'sources': sources, 'cached': True})}\n\n"
             return
 
+        usage_info = None
         try:
             async with async_session() as stream_db:
                 async for chunk in ask_book_stream(
@@ -681,6 +684,8 @@ async def chat_with_book_stream(
                 ):
                     if chunk.get("__sources__"):
                         sources = chunk.get("sources")
+                    elif chunk.get("__usage__"):
+                        usage_info = chunk.get("__usage__")
                     else:
                         full_response += chunk.get("content", "")
                         yield f"data: {json.dumps(chunk)}\n\n"
@@ -691,9 +696,14 @@ async def chat_with_book_stream(
                     provider="fireworks", model="deepseek-v4p1-flash",
                 ))
                 await stream_db.commit()
+
                 await usage_service.log_usage(
-                    stream_db, user_id, "fireworks", "deepseek-v4p1-flash",
-                    "/chat/stream", tokens_out=len(full_response) // 4,
+                    stream_db, user_id,
+                    (usage_info or {}).get("provider", "fireworks"),
+                    (usage_info or {}).get("model", "deepseek-v4p1-flash"),
+                    "/chat/stream",
+                    tokens_in=(usage_info or {}).get("tokens_in", 0),
+                    tokens_out=(usage_info or {}).get("tokens_out", len(full_response) // 4),
                     book_id=book_id,
                 )
 

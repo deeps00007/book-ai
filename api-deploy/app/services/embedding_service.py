@@ -15,12 +15,12 @@ async def _try_embedding(client: AsyncOpenAI, texts: list[str]) -> list[list[flo
     return [item.embedding for item in response.data]
 
 
-async def create_embedding(text: str, user_id: str = None) -> list[float]:
-    embeddings = await create_embeddings_batch([text], user_id)
+async def create_embedding(text: str, user_id: str = None, endpoint: str = "embedding:query") -> list[float]:
+    embeddings = await create_embeddings_batch([text], user_id, endpoint=endpoint)
     return embeddings[0]
 
 
-async def create_embeddings_batch(texts: list[str], user_id: str = None) -> list[list[float]]:
+async def create_embeddings_batch(texts: list[str], user_id: str = None, endpoint: str = "embedding") -> list[list[float]]:
     pool_keys = []
     try:
         async with async_session() as db:
@@ -42,6 +42,19 @@ async def create_embeddings_batch(texts: list[str], user_id: str = None) -> list
 
             if kid:
                 await mark_key_active(kid)
+
+            # log embedding usage (estimated tokens = chars / 4)
+            if user_id:
+                try:
+                    from app.services import usage_service
+                    async with async_session() as db:
+                        await usage_service.log_usage(
+                            db, user_id, "fireworks", settings.embedding_model, endpoint,
+                            tokens_in=sum(len(t) // 4 for t in texts), tokens_out=0,
+                        )
+                except Exception:
+                    pass
+
             return result
 
         except Exception as e:

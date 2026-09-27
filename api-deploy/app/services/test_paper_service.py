@@ -167,6 +167,17 @@ async def generate_test_paper_questions(
         user_id=user_id,
     )
 
+    if user_id:
+        try:
+            from app.services import usage_service
+            await usage_service.log_usage(
+                db, user_id, response.provider, response.model, "/test-paper",
+                tokens_in=response.tokens_in, tokens_out=response.tokens_out,
+                response_time_ms=response.response_time_ms, book_id=book_id,
+            )
+        except Exception:
+            pass
+
     try:
         content = response.content.strip()
         if content.startswith("```"):
