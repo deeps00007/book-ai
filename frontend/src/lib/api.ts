@@ -259,6 +259,22 @@ export async function getChatSessions(bookId: string) {
   return request(`/chat/sessions/${bookId}`);
 }
 
+export async function getSessionMessages(sessionId: string) {
+  return request(`/chat/sessions/${sessionId}/messages`);
+}
+
+export async function renameSession(sessionId: string, title: string) {
+  return request(`/chat/sessions/${sessionId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+}
+
+export async function deleteSession(sessionId: string) {
+  return request(`/chat/sessions/${sessionId}`, { method: "DELETE" });
+}
+
 export async function generateTestPaper(data: {
   book_id: string;
   chapter_ids: string[];

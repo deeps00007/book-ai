@@ -15,12 +15,13 @@ from app.models import User, Book, Chapter, ChatSession, ChatMessage, BookChunk
 from app.schemas import (
     UserCreate, UserLogin, TokenResponse, UserResponse,
     BookResponse, BookUploadResponse, ChapterResponse,
-    ChatRequest, ChatResponse, ChatSessionResponse,
+    ChatRequest, ChatResponse, ChatSessionResponse, ChatMessageResponse,
 )
 from app.services.upload_service import save_uploaded_file, process_book
 from app.services.storage_service import upload_book_async
 from app.services import google_drive_service
 from app.services import github_trigger
+from app.services import cache_service
 from app.services.rag_service import ask_book, ask_book_stream
 
 router = APIRouter()
@@ -542,7 +543,8 @@ async def chat_with_book(
         if not session or session.user_id != user.id:
             raise HTTPException(status_code=404, detail="Chat session not found")
     else:
-        session = ChatSession(user_id=user.id, book_id=req.book_id)
+        session = ChatSession(user_id=user.id, book_id=req.book_id,
+                              title=req.question[:60] or "New Chat")
         db.add(session)
         await db.flush()
 
@@ -552,30 +554,41 @@ async def chat_with_book(
         .order_by(ChatMessage.created_at)
         .limit(20)
     )
-    chat_history = [
-        {"role": m.role, "content": m.content}
-        for m in history_result.scalars().all()
-    ]
+    prior = history_result.scalars().all()
+    chat_history = [{"role": m.role, "content": m.content} for m in prior]
 
-    response = await ask_book(db, req.book_id, req.question, chat_history, chapter_id=req.chapter_id, user_id=user.id)
+    if not prior and (not session.title or session.title == "New Chat"):
+        session.title = req.question[:60]
 
-    user_msg = ChatMessage(session_id=session.id, role="user", content=req.question)
-    assistant_msg = ChatMessage(
-        session_id=session.id, role="assistant", content=response.content,
-        sources={"chunks": response.sources}, provider=response.provider,
-        model=response.model, tokens_used=response.tokens_used,
-        response_time_ms=response.response_time_ms,
-    )
-    db.add_all([user_msg, assistant_msg])
+    # 1) Try the cache (no tokens spent)
+    cached = await cache_service.get_cached(db, req.book_id, req.question, req.chapter_id)
+
+    if cached:
+        answer, sources, provider, model, tokens, ms = (
+            cached["answer"], cached["sources"], "cache", "cache", 0, 0
+        )
+    else:
+        response = await ask_book(db, req.book_id, req.question, chat_history,
+                                  chapter_id=req.chapter_id, user_id=user.id)
+        answer, sources, provider, model = (
+            response.content, response.sources, response.provider, response.model
+        )
+        tokens, ms = response.tokens_used, response.response_time_ms
+        await cache_service.store_cached(db, req.book_id, req.question, answer,
+                                         sources, req.chapter_id)
+
+    db.add_all([
+        ChatMessage(session_id=session.id, role="user", content=req.question),
+        ChatMessage(session_id=session.id, role="assistant", content=answer,
+                    sources={"chunks": sources} if sources else None,
+                    provider=provider, model=model, tokens_used=tokens,
+                    response_time_ms=ms),
+    ])
+    await db.commit()
 
     return ChatResponse(
-        answer=response.content,
-        session_id=session.id,
-        sources=response.sources,
-        provider=response.provider,
-        model=response.model,
-        tokens_used=response.tokens_used,
-        response_time_ms=response.response_time_ms,
+        answer=answer, session_id=session.id, sources=sources,
+        provider=provider, model=model, tokens_used=tokens, response_time_ms=ms,
     )
 
 
@@ -596,7 +609,8 @@ async def chat_with_book_stream(
         if not session or session.user_id != user.id:
             raise HTTPException(status_code=404, detail="Chat session not found")
     else:
-        session = ChatSession(user_id=user.id, book_id=req.book_id)
+        session = ChatSession(user_id=user.id, book_id=req.book_id,
+                              title=req.question[:60] or "New Chat")
         db.add(session)
         await db.flush()
 
@@ -606,13 +620,16 @@ async def chat_with_book_stream(
         .order_by(ChatMessage.created_at)
         .limit(20)
     )
-    chat_history = [
-        {"role": m.role, "content": m.content}
-        for m in history_result.scalars().all()
-    ]
+    prior = history_result.scalars().all()
+    chat_history = [{"role": m.role, "content": m.content} for m in prior]
 
-    user_msg = ChatMessage(session_id=session.id, role="user", content=req.question)
-    db.add(user_msg)
+    if not prior and (not session.title or session.title == "New Chat"):
+        session.title = req.question[:60]
+
+    # Cache check — if we already answered this, stream it back instantly (0 tokens)
+    cached = await cache_service.get_cached(db, req.book_id, req.question, req.chapter_id)
+
+    db.add(ChatMessage(session_id=session.id, role="user", content=req.question))
     await db.commit()
 
     session_id = session.id
@@ -625,6 +642,22 @@ async def chat_with_book_stream(
     async def event_stream():
         full_response = ""
         sources = None
+
+        # Cached answer: emit instantly
+        if cached:
+            full_response = cached["answer"]
+            sources = cached["sources"]
+            for i in range(0, len(full_response), 60):
+                yield f"data: {json.dumps({'content': full_response[i:i+60], 'provider': 'cache'})}\n\n"
+            async with async_session() as sdb:
+                sdb.add(ChatMessage(session_id=session_id, role="assistant",
+                                    content=full_response,
+                                    sources={"chunks": sources} if sources else None,
+                                    provider="cache", model="cache"))
+                await sdb.commit()
+            yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'sources': sources, 'cached': True})}\n\n"
+            return
+
         try:
             async with async_session() as stream_db:
                 async for chunk in ask_book_stream(
@@ -637,14 +670,15 @@ async def chat_with_book_stream(
                         full_response += chunk.get("content", "")
                         yield f"data: {json.dumps(chunk)}\n\n"
 
-                assistant_msg = ChatMessage(
+                stream_db.add(ChatMessage(
                     session_id=session_id, role="assistant", content=full_response,
                     sources={"chunks": sources} if sources else None,
                     provider="fireworks", model="deepseek-v4-pro",
-                )
-                stream_db.add(assistant_msg)
+                ))
                 await stream_db.commit()
 
+            await cache_service.store_cached(db, book_id, question, full_response,
+                                             sources, chapter_id)
             yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'sources': sources})}\n\n"
         except Exception as e:
             logger.error(f"Stream error: {e}")
@@ -676,3 +710,54 @@ async def list_sessions(
     )
     sessions = result.scalars().all()
     return [ChatSessionResponse.model_validate(s) for s in sessions]
+
+
+
+@router.get("/chat/sessions/{session_id}/messages", response_model=list[ChatMessageResponse])
+async def get_session_messages(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    session = await db.get(ChatSession, session_id)
+    if not session or session.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    result = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.session_id == session_id)
+        .order_by(ChatMessage.created_at)
+    )
+    return [ChatMessageResponse.model_validate(m) for m in result.scalars().all()]
+
+
+@router.patch("/chat/sessions/{session_id}")
+async def rename_session(
+    session_id: str,
+    req: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    session = await db.get(ChatSession, session_id)
+    if not session or session.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    title = (req.get("title") or "").strip()
+    if title:
+        session.title = title[:200]
+        await db.commit()
+    return {"ok": True, "title": session.title}
+
+
+@router.delete("/chat/sessions/{session_id}")
+async def delete_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    session = await db.get(ChatSession, session_id)
+    if not session or session.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    await db.execute(text("DELETE FROM chat_messages WHERE session_id = :s"), {"s": session_id})
+    await db.execute(text("DELETE FROM chat_sessions WHERE id = :s"), {"s": session_id})
+    await db.commit()
+    return {"ok": True}
+

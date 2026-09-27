@@ -173,3 +173,18 @@ class APIUsageLog(Base):
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class AnswerCache(Base):
+    __tablename__ = "answer_cache"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid)
+    book_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    chapter_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    question_norm: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    sources: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+

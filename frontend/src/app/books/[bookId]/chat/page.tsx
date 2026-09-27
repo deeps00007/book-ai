@@ -4,9 +4,15 @@ import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 import { useAuth } from "@/components/AuthProvider";
-import { getBook, getChatStreamUrl, getChatSessions, getChapters } from "@/lib/api";
+import {
+  getBook, getChatStreamUrl, getChatSessions, getChapters,
+  getSessionMessages, deleteSession,
+} from "@/lib/api";
 import { Book, Chapter, ChatSession } from "@/lib/types";
-import { Loader2, Send, BookOpen, Bot, User, ArrowLeft, Sparkles, Layers } from "lucide-react";
+import {
+  Loader2, Send, BookOpen, Bot, User, ArrowLeft, Sparkles, Layers,
+  SquarePen, Trash2, MessageSquare,
+} from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 
@@ -61,6 +67,47 @@ export default function ChatPage() {
     }
   }
 
+  async function refreshSessions() {
+    try {
+      setSessions(await getChatSessions(bookId));
+    } catch {}
+  }
+
+  function startNewChat() {
+    setSessionId(null);
+    setMessages([]);
+    setInput("");
+  }
+
+  async function openSession(id: string) {
+    if (id === sessionId) return;
+    try {
+      setSessionId(id);
+      const msgs = await getSessionMessages(id);
+      setMessages(
+        (msgs || []).map((m: any) => ({
+          role: m.role,
+          content: m.content,
+          sources: m.sources?.chunks || undefined,
+        }))
+      );
+    } catch {
+      toast.error("Failed to load chat");
+    }
+  }
+
+  async function removeSession(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
+    try {
+      await deleteSession(id);
+      setSessions((prev) => prev.filter((s) => s.id !== id));
+      if (sessionId === id) startNewChat();
+      toast.success("Chat deleted");
+    } catch {
+      toast.error("Failed to delete");
+    }
+  }
+
   async function handleSend() {
     if (!input.trim() || streaming || !bookId) return;
     const question = input.trim();
@@ -68,18 +115,17 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, { role: "user", content: question }]);
     setStreaming(true);
 
-    const assistantMessage: Message = { role: "assistant", content: "" };
-    setMessages((prev) => [...prev, assistantMessage]);
+    setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
     try {
-      const { url, options } = getChatStreamUrl(bookId, question, sessionId, selectedChapter || undefined);
+      const { url, options } = getChatStreamUrl(bookId, question, sessionId || undefined, selectedChapter || undefined);
       const response = await fetch(url, options);
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
-
       if (!reader) throw new Error("No reader");
 
       let buffer = "";
+      let newSessionId = sessionId;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -92,33 +138,30 @@ export default function ChatPage() {
             try {
               const data = JSON.parse(line.slice(6));
               if (data.done) {
-                if (data.session_id) setSessionId(data.session_id);
+                if (data.session_id) { setSessionId(data.session_id); newSessionId = data.session_id; }
                 if (data.sources) {
                   setMessages((prev) => {
-                    const newMsgs = [...prev];
-                    const last = { ...newMsgs[newMsgs.length - 1] };
-                    if (last.role === "assistant") {
-                      last.sources = data.sources;
-                      newMsgs[newMsgs.length - 1] = last;
-                    }
-                    return newMsgs;
+                    const m = [...prev];
+                    const last = { ...m[m.length - 1] };
+                    if (last.role === "assistant") { last.sources = data.sources; m[m.length - 1] = last; }
+                    return m;
                   });
                 }
               } else if (data.content) {
                 setMessages((prev) => {
-                  const newMsgs = [...prev];
-                  const last = { ...newMsgs[newMsgs.length - 1] };
-                  if (last.role === "assistant") {
-                    last.content += data.content;
-                    newMsgs[newMsgs.length - 1] = last;
-                  }
-                  return newMsgs;
+                  const m = [...prev];
+                  const last = { ...m[m.length - 1] };
+                  if (last.role === "assistant") { last.content += data.content; m[m.length - 1] = last; }
+                  return m;
                 });
               }
             } catch {}
           }
         }
       }
+      // refresh the sidebar so the new / titled chat shows up
+      await refreshSessions();
+      if (!sessionId && newSessionId) setSessionId(newSessionId);
     } catch (err: any) {
       toast.error(err.message || "Chat failed");
     } finally {
@@ -140,49 +183,80 @@ export default function ChatPage() {
   return (
     <div className="flex h-screen">
       <Sidebar />
-      <main className="flex-1 flex flex-col h-screen">
+
+      {/* Chat history panel */}
+      <aside className="w-64 border-r border-gray-200 bg-gray-50 flex flex-col h-screen shrink-0">
+        <div className="p-3 border-b border-gray-200">
+          <button
+            onClick={startNewChat}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium transition-colors"
+          >
+            <SquarePen className="w-4 h-4" />
+            New Chat
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {sessions.length === 0 ? (
+            <p className="text-xs text-gray-400 text-center py-6">No chats yet</p>
+          ) : (
+            sessions.map((s) => (
+              <div
+                key={s.id}
+                onClick={() => openSession(s.id)}
+                className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer text-sm ${
+                  sessionId === s.id ? "bg-brand-100 text-brand-800" : "hover:bg-gray-200/60 text-gray-700"
+                }`}
+              >
+                <MessageSquare className="w-4 h-4 shrink-0 opacity-60" />
+                <span className="flex-1 truncate">{s.title || "New Chat"}</span>
+                <button
+                  onClick={(e) => removeSession(e, s.id)}
+                  className="opacity-0 group-hover:opacity-100 p-0.5 hover:text-red-500"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </aside>
+
+      <main className="flex-1 flex flex-col h-screen min-w-0">
         <header className="px-6 py-4 border-b border-gray-200 bg-white flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => router.push("/books")}
-              className="p-1.5 hover:bg-gray-100 rounded-lg"
-            >
+          <div className="flex items-center gap-3 min-w-0">
+            <button onClick={() => router.push("/books")} className="p-1.5 hover:bg-gray-100 rounded-lg">
               <ArrowLeft className="w-5 h-5 text-gray-500" />
             </button>
-            <BookOpen className="w-6 h-6 text-brand-600" />
-            <div>
-              <h1 className="font-semibold text-gray-900">{book?.title}</h1>
+            <BookOpen className="w-6 h-6 text-brand-600 shrink-0" />
+            <div className="min-w-0">
+              <h1 className="font-semibold text-gray-900 truncate">{book?.title}</h1>
               <p className="text-xs text-gray-500">{book?.total_pages} pages &middot; {book?.total_chunks} chunks</p>
             </div>
           </div>
-          {chapters.length > 1 && (
-            <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4 text-gray-400" />
-              <select
-                value={selectedChapter}
-                onChange={(e) => {
-                  setSelectedChapter(e.target.value);
-                  setMessages([]);
-                  setSessionId(null);
-                }}
-                className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-500 bg-white"
-              >
-                <option value="">All Chapters</option>
-                {chapters.map((ch) => (
-                  <option key={ch.id} value={ch.id}>
-                    {ch.title} (p. {ch.start_page}-{ch.end_page})
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          <button
-            onClick={() => router.push(`/generate?book_id=${bookId}`)}
-            className="flex items-center gap-2 px-4 py-2 text-sm bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 font-medium transition-colors"
-          >
-            <Sparkles className="w-4 h-4" />
-            Generate Content
-          </button>
+          <div className="flex items-center gap-3">
+            {chapters.length > 1 && (
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-gray-400" />
+                <select
+                  value={selectedChapter}
+                  onChange={(e) => { setSelectedChapter(e.target.value); startNewChat(); }}
+                  className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-500 bg-white"
+                >
+                  <option value="">All Chapters</option>
+                  {chapters.map((ch) => (
+                    <option key={ch.id} value={ch.id}>{ch.title} (p. {ch.start_page}-{ch.end_page})</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <button
+              onClick={() => router.push(`/generate?book_id=${bookId}`)}
+              className="flex items-center gap-2 px-4 py-2 text-sm bg-purple-50 text-purple-700 rounded-lg hover:bg-purple-100 font-medium transition-colors"
+            >
+              <Sparkles className="w-4 h-4" />
+              Generate
+            </button>
+          </div>
         </header>
 
         <div className="flex-1 overflow-y-auto p-6">
@@ -190,9 +264,7 @@ export default function ChatPage() {
             {messages.length === 0 && (
               <div className="text-center py-20">
                 <Bot className="w-16 h-16 text-brand-200 mx-auto mb-4" />
-                <h2 className="text-xl font-semibold text-gray-600 mb-2">
-                  Chat with {book?.title}
-                </h2>
+                <h2 className="text-xl font-semibold text-gray-600 mb-2">Chat with {book?.title}</h2>
                 <p className="text-gray-400">Ask questions about the book content</p>
               </div>
             )}
@@ -204,13 +276,9 @@ export default function ChatPage() {
                     <Bot className="w-4 h-4 text-brand-600" />
                   </div>
                 )}
-                <div
-                  className={`max-w-[80%] rounded-2xl px-4 py-3 ${
-                    msg.role === "user"
-                      ? "bg-brand-600 text-white rounded-br-md"
-                      : "bg-gray-100 text-gray-900 rounded-bl-md"
-                  }`}
-                >
+                <div className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+                  msg.role === "user" ? "bg-brand-600 text-white rounded-br-md" : "bg-gray-100 text-gray-900 rounded-bl-md"
+                }`}>
                   {msg.role === "user" ? (
                     <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                   ) : msg.content ? (

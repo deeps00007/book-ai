@@ -80,6 +80,18 @@ class ChatResponse(BaseModel):
     response_time_ms: int
 
 
+class ChatMessageResponse(BaseModel):
+    id: str
+    role: str
+    content: str
+    sources: dict | None = None
+    provider: str | None = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class ChatSessionResponse(BaseModel):
     id: str
     book_id: str
