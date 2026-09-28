@@ -593,9 +593,12 @@ async def chat_with_book(
         )
         tokens, ms = response.tokens_used, response.response_time_ms
         tokens_in, tokens_out = response.tokens_in, response.tokens_out
-        await cache_service.store_cached(db, req.book_id, req.question, answer,
-                                         sources, req.chapter_id, user.id,
-                                         query_embedding=q_emb)
+        if answer and answer.strip():
+            await cache_service.store_cached(db, req.book_id, req.question, answer,
+                                             sources, req.chapter_id, user.id,
+                                             query_embedding=q_emb)
+        else:
+            answer = "I couldn't generate an answer just now. Please try again."
     logger.info(f"[chat] cache exact={(_t1-_t0)*1000:.0f}ms semantic={(_t2-_t1)*1000:.0f}ms answer={(_t.time()-_t2)*1000:.0f}ms")
 
     db.add_all([
@@ -716,6 +719,10 @@ async def chat_with_book_stream(
                         full_response += chunk.get("content", "")
                         yield f"data: {json.dumps(chunk)}\n\n"
 
+                if not full_response.strip():
+                    full_response = "I couldn't generate an answer just now. Please try again."
+                    yield f"data: {json.dumps({'content': full_response})}\n\n"
+
                 stream_db.add(ChatMessage(
                     session_id=session_id, role="assistant", content=full_response,
                     sources={"chunks": sources} if sources else None,
@@ -733,9 +740,10 @@ async def chat_with_book_stream(
                     book_id=book_id,
                 )
 
-            await cache_service.store_cached(db, book_id, question, full_response,
-                                             sources, chapter_id, user_id,
-                                             query_embedding=query_embedding)
+            if full_response.strip() and full_response != "I couldn't generate an answer just now. Please try again.":
+                await cache_service.store_cached(db, book_id, question, full_response,
+                                                 sources, chapter_id, user_id,
+                                                 query_embedding=query_embedding)
             yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'sources': sources})}\n\n"
         except Exception as e:
             logger.error(f"Stream error: {e}")

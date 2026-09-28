@@ -130,6 +130,9 @@ class LLMGateway:
                 response = await client.chat.completions.create(
                     model=actual_model, messages=messages, temperature=temp, max_tokens=max_tok,
                 )
+                content = (response.choices[0].message.content or "").strip()
+                if not content:
+                    raise Exception("empty completion")
                 if kid:
                     try:
                         await mark_key_active(kid)
@@ -137,7 +140,7 @@ class LLMGateway:
                         pass
                 elapsed = int((time.time() - start_time) * 1000)
                 return LLMResponse(
-                    content=response.choices[0].message.content,
+                    content=content,
                     provider=Provider.FIREWORKS.value,
                     model=actual_model,
                     tokens_used=response.usage.total_tokens if response.usage else 0,
@@ -182,10 +185,13 @@ class LLMGateway:
                     temperature=temp,
                     max_tokens=max_tok,
                 )
+                content = (response.choices[0].message.content or "").strip()
+                if not content:
+                    raise Exception("empty completion")
                 self._mark_healthy(prov.value)
                 elapsed = int((time.time() - start_time) * 1000)
                 return LLMResponse(
-                    content=response.choices[0].message.content,
+                    content=content,
                     provider=prov.value,
                     model=actual_model,
                     tokens_used=response.usage.total_tokens if response.usage else 0,
@@ -217,6 +223,7 @@ class LLMGateway:
                 async with async_session() as db:
                     pool_keys = await get_active_keys(db, user_id)
                 for entry in pool_keys:
+                    _produced = False
                     try:
                         client = AsyncOpenAI(api_key=entry["api_key"], base_url=(settings.fireworks_base_url or "").strip())
                         actual_model = model or PROVIDER_CONFIG[Provider.FIREWORKS]["default_model"]
@@ -229,7 +236,10 @@ class LLMGateway:
                                 _usage = chunk.usage
                             delta = chunk.choices[0].delta if chunk.choices else None
                             if delta and delta.content:
+                                _produced = True
                                 yield {"content": delta.content, "provider": Provider.FIREWORKS.value, "model": actual_model}
+                        if not _produced:
+                            raise Exception("empty stream")
                         if _usage:
                             yield {"__usage__": {
                                 "provider": Provider.FIREWORKS.value, "model": actual_model,
@@ -251,6 +261,10 @@ class LLMGateway:
                                     await mark_key_failed(entry["id"], _err)
                             except Exception:
                                 pass
+                        if _produced:
+                            # partial answer already streamed to the client — stop
+                            # retrying so we don't append a second, duplicated answer
+                            return
             except Exception:
                 pass
 
@@ -278,12 +292,16 @@ class LLMGateway:
                     max_tokens=max_tok, stream=True,
                 )
             _usage = None
+            _produced = False
             async for chunk in stream:
                 if getattr(chunk, "usage", None):
                     _usage = chunk.usage
                 delta = chunk.choices[0].delta if chunk.choices else None
                 if delta and delta.content:
+                    _produced = True
                     yield {"content": delta.content, "provider": prov.value, "model": actual_model}
+            if not _produced:
+                raise Exception("empty stream")
             if _usage:
                 yield {"__usage__": {
                     "provider": prov.value, "model": actual_model,
