@@ -108,8 +108,9 @@ def _detect_by_font(per_page: list) -> list[dict]:
     big = median * 1.7          # clearly-larger heading
     huge = median * 3.0         # chapter-number marker
 
-    # Count how often each candidate heading appears — anything on many pages
-    # is a running header (e.g. "BIOLOGY"), not a chapter title.
+    # Count how often each *large* heading appears — a big title repeating on
+    # many pages is a running header (e.g. "BIOLOGY"), not a chapter title.
+    # Only count big lines so a common body word like "Water" is never dropped.
     from collections import Counter
     freq = Counter()
     page_candidates = []
@@ -119,8 +120,9 @@ def _detect_by_font(per_page: list) -> list[dict]:
             if 3 <= len(t) <= 70 and not t.isdigit() and not _SKIP_HEADING.match(t)
         ]
         page_candidates.append((pnum, lines, cands))
-        for t, _ in cands:
-            freq[t.lower().strip()] += 1
+        for t, sz in cands:
+            if sz >= big:
+                freq[t.lower().strip()] += 1
 
     page_count = max(len(per_page), 1)
     running = {t for t, n in freq.items() if n >= max(3, page_count * 0.2)}
@@ -332,14 +334,19 @@ async def process_book(
         chunk["embedding"] = embedding
         chunk["embedding_json"] = json.dumps(embedding)
 
+    # chapter page ranges: end at the page before the next chapter starts
+    ordered = sorted(chapters, key=lambda c: c["page_number"])
+    chapter_out = []
+    for i, ch in enumerate(ordered):
+        start = ch["page_number"]
+        end = ordered[i + 1]["page_number"] - 1 if i + 1 < len(ordered) else total_pages
+        chapter_out.append({"title": ch["title"], "start_page": start, "end_page": max(end, start)})
+
     return {
         "total_pages": total_pages,
         "total_chunks": len(all_chunks),
         "chunks": all_chunks,
-        "chapters": [
-            {"title": ch["title"], "start_page": ch["page_number"], "end_page": ch["page_number"]}
-            for ch in chapters
-        ],
+        "chapters": chapter_out,
     }
 
 
