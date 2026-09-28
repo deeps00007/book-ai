@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface Message {
   role: "user" | "assistant";
@@ -276,8 +277,18 @@ export default function ChatPage() {
                   {msg.role === "user" ? (
                     <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.content}</p>
                   ) : msg.content ? (
-                    <div className="text-sm leading-relaxed prose prose-sm max-w-none prose-headings:text-gray-900 prose-p:text-gray-800 prose-strong:text-gray-900 prose-li:text-gray-800">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    <div className="prose prose-sm max-w-none text-gray-800 leading-relaxed
+                      prose-headings:text-gray-900 prose-headings:font-semibold
+                      prose-h1:mt-4 prose-h1:mb-2 prose-h1:text-lg
+                      prose-h2:mt-4 prose-h2:mb-2 prose-h2:text-base
+                      prose-h3:mt-3 prose-h3:mb-1.5 prose-h3:text-sm
+                      prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5
+                      prose-strong:text-gray-900 prose-a:text-brand-600
+                      prose-code:text-pink-600 prose-code:bg-white/70 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:font-normal prose-code:before:content-none prose-code:after:content-none
+                      prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:text-xs prose-pre:rounded-lg
+                      prose-table:text-xs prose-th:py-1.5 prose-td:py-1.5 prose-th:px-2 prose-td:px-2
+                      prose-hr:my-3 prose-blockquote:border-l-2 prose-blockquote:not-italic prose-blockquote:text-gray-600 prose-blockquote:font-normal">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                     </div>
                   ) : streaming && msg === messages[messages.length - 1] ? (
                     <span className="inline-flex gap-1">
