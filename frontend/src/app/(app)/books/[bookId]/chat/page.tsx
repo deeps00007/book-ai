@@ -225,7 +225,7 @@ export default function ChatPage() {
             <BookOpen className="w-6 h-6 text-brand-600 shrink-0" />
             <div className="min-w-0">
               <h1 className="font-semibold text-gray-900 truncate">{book?.title}</h1>
-              <p className="text-xs text-gray-500">{book?.total_pages} pages &middot; {book?.total_chunks} chunks</p>
+              <p className="text-xs text-gray-500">{book?.total_pages} pages</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -299,15 +299,23 @@ export default function ChatPage() {
                   ) : null}
                   {msg.sources?.length > 0 && (
                     <details className="mt-2">
-                      <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-500">
-                        Sources ({msg.sources.length} chunks)
+                      <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700 select-none">
+                        View sources ({msg.sources.length})
                       </summary>
-                      <div className="mt-2 space-y-1">
-                        {msg.sources.slice(0, 3).map((s: any, idx: number) => (
-                          <p key={idx} className="text-xs text-gray-400 bg-white/50 p-2 rounded">
-                            {(s.content || "").slice(0, 150)}...
-                          </p>
-                        ))}
+                      <div className="mt-2 space-y-1.5">
+                        {msg.sources.slice(0, 3).map((s: any, idx: number) => {
+                          const page = s.page_start || s.page_end;
+                          return (
+                            <div key={idx} className="text-xs text-gray-500 bg-white/60 border border-gray-200/70 p-2 rounded">
+                              {page ? (
+                                <span className="font-medium text-gray-600">
+                                  Page {s.page_start}{s.page_end && s.page_end !== s.page_start ? `–${s.page_end}` : ""}:{" "}
+                                </span>
+                              ) : null}
+                              {(s.content || "").replace(/\s+/g, " ").slice(0, 150)}…
+                            </div>
+                          );
+                        })}
                       </div>
                     </details>
                   )}

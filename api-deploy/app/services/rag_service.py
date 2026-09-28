@@ -38,7 +38,7 @@ ACCURACY RULES (follow these or the answer will be WRONG):
    (marked with [QUESTION FOUND HERE]), answer from the paragraphs immediately
    surrounding that marker. IGNORE semantically similar sentences elsewhere.
 
-3. LOCAL CONTEXT PRIORITY: The [LOCAL CONTEXT] chunks (directly before/after the
+3. LOCAL CONTEXT PRIORITY: The [LOCAL CONTEXT] excerpts (directly before/after the
    question) contain the answer. [OTHER CONTEXT] is background only and must not
    override the local context.
 
@@ -262,7 +262,7 @@ def build_rag_prompt(query: str, chunks: list[dict], chat_history: list[dict] = 
         ci = c.get("chunk_index", 0)
         in_local = anchor_idx is not None and abs(ci - anchor_idx) <= 2
 
-        lbl = f"[Chunk {i+1}"
+        lbl = "[Excerpt"
         if c.get("page_start"):
             lbl += f", p.{c['page_start']}"
         lbl += "]"
@@ -292,10 +292,10 @@ def build_rag_prompt(query: str, chunks: list[dict], chat_history: list[dict] = 
     instr = ""
     if anchor_idx is not None:
         instr = (
-            f"\n\nCRITICAL: Chunk with [QUESTION FOUND HERE] contains the user's exact question "
-            "from the textbook. The answer MUST come from the [LOCAL CONTEXT] chunks "
+            "\n\nCRITICAL: The [QUESTION FOUND HERE] excerpt contains the user's exact question "
+            "from the textbook. The answer MUST come from the [LOCAL CONTEXT] excerpts "
             "immediately before and after that question. "
-            "[OTHER CONTEXT] chunks may be from a different part of the book — "
+            "[OTHER CONTEXT] excerpts may be from a different part of the book — "
             "their similar words do NOT make them the answer. "
             "Consider the STORY TIMELINE — events happen in order."
         )
