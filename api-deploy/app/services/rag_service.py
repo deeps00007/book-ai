@@ -16,6 +16,15 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """You are an AI Teacher assistant that answers the user's question using ONLY the provided textbook excerpts.
 
+SOURCE LOCK (highest priority — never break these):
+- The provided textbook excerpts are the ONLY source of truth for the answer.
+- Never use outside knowledge, general knowledge, or information from any other
+  book, website, or subject — even if you already know it.
+- Never add facts, examples, definitions, numbers, or details that are not
+  present in the excerpts.
+- If the excerpts do not contain the answer, reply with exactly one line:
+  "This isn't covered in the provided book." — do not guess or fill in gaps.
+
 ACCURACY RULES (follow these or the answer will be WRONG):
 
 1. STORY TIMELINE: If the book is a narrative/story, events happen in ORDER.
@@ -84,6 +93,25 @@ def _bm25_score(ql: list[str], dl: list[str]) -> float:
 
 
 QUESTION_WORDS = {"what", "why", "how", "who", "when", "where", "which", "explain", "describe", "define", "list", "identify", "discuss"}
+
+
+def _level_hint(book_title: str | None) -> str:
+    """Detect the class/grade from the book title and return a tone hint."""
+    if not book_title:
+        return ""
+    t = book_title.lower()
+    m = re.search(r"(?:class|grade|std|standard)\s*(\d{1,2})", t)
+    if not m:
+        m = re.search(r"(\d{1,2})\s*(?:st|nd|rd|th)\b", t)
+    if not m:
+        m = re.search(r"\b(\d{1,2})\b\s*$", t)
+    if m:
+        grade = m.group(1)
+        return (
+            f"The reader is a Class {grade} student. Use simple, age-appropriate "
+            f"language and short sentences suitable for that class level."
+        )
+    return ""
 
 
 def _is_likely_question(text: str) -> bool:
@@ -220,7 +248,8 @@ async def retrieve_relevant_chunks(
     return out
 
 
-def build_rag_prompt(query: str, chunks: list[dict], chat_history: list[dict] = None) -> list[dict]:
+def build_rag_prompt(query: str, chunks: list[dict], chat_history: list[dict] = None,
+                     book_title: str = None) -> list[dict]:
     anchor_idx = None
     for i, c in enumerate(chunks):
         if c.get("is_anchor") and anchor_idx is None:
@@ -271,9 +300,13 @@ def build_rag_prompt(query: str, chunks: list[dict], chat_history: list[dict] = 
             "Consider the STORY TIMELINE — events happen in order."
         )
 
+    book_line = f"\n\nBOOK: \"{book_title}\"" if book_title else ""
+    level = _level_hint(book_title)
+    level_line = f"\nAUDIENCE: {level}" if level else ""
+
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"{context}{instr}\n\nPREVIOUS:\n{_fmt(chat_history)}\n\nQUESTION: {query}"},
+        {"role": "user", "content": f"{context}{instr}{book_line}{level_line}\n\nPREVIOUS:\n{_fmt(chat_history)}\n\nQUESTION: {query}"},
     ]
 
 
@@ -287,12 +320,13 @@ async def ask_book(
     db: AsyncSession, book_id: str, question: str,
     chat_history: list[dict] = None, chapter_id: str = None,
     user_id: str = None, query_embedding: list[float] = None,
+    book_title: str = None,
 ) -> LLMResponse:
     chunks = await retrieve_relevant_chunks(
         db, book_id, question, top_k=5, chapter_id=chapter_id, user_id=user_id,
         query_embedding=query_embedding,
     )
-    messages = build_rag_prompt(question, chunks, chat_history)
+    messages = build_rag_prompt(question, chunks, chat_history, book_title=book_title)
     response = await llm_gateway.chat(
         messages=messages, provider=Provider.FIREWORKS,
         temperature=settings.temperature, max_tokens=settings.max_tokens,
@@ -306,12 +340,13 @@ async def ask_book_stream(
     db: AsyncSession, book_id: str, question: str,
     chat_history: list[dict] = None, chapter_id: str = None,
     user_id: str = None, query_embedding: list[float] = None,
+    book_title: str = None,
 ):
     chunks = await retrieve_relevant_chunks(
         db, book_id, question, top_k=5, chapter_id=chapter_id, user_id=user_id,
         query_embedding=query_embedding,
     )
-    messages = build_rag_prompt(question, chunks, chat_history)
+    messages = build_rag_prompt(question, chunks, chat_history, book_title=book_title)
     stream = llm_gateway.chat_stream(
         messages=messages, provider=Provider.FIREWORKS,
         temperature=settings.temperature, max_tokens=settings.max_tokens,

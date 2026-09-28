@@ -587,7 +587,7 @@ async def chat_with_book(
     else:
         response = await ask_book(db, req.book_id, req.question, chat_history,
                                   chapter_id=req.chapter_id, user_id=user.id,
-                                  query_embedding=q_emb)
+                                  query_embedding=q_emb, book_title=book.title)
         answer, sources, provider, model = (
             response.content, response.sources, response.provider, response.model
         )
@@ -675,6 +675,7 @@ async def chat_with_book_stream(
     user_id = user.id
     history_snapshot = list(chat_history)
     query_embedding = q_emb
+    book_title_snapshot = book.title
 
     async def event_stream():
         full_response = ""
@@ -705,7 +706,7 @@ async def chat_with_book_stream(
                 async for chunk in ask_book_stream(
                     stream_db, book_id, question, history_snapshot,
                     chapter_id=chapter_id, user_id=user_id,
-                    query_embedding=query_embedding,
+                    query_embedding=query_embedding, book_title=book_title_snapshot,
                 ):
                     if chunk.get("__sources__"):
                         sources = chunk.get("sources")
