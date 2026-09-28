@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sidebar } from "@/components/Sidebar";
 import { useAuth } from "@/components/AuthProvider";
 import { getUsageSummary, getUsageDaily, getUsageByModel } from "@/lib/api";
 import { Loader2, Activity, Zap, Coins, Database, TrendingDown, Clock } from "lucide-react";
@@ -43,11 +42,8 @@ export default function UsagePage() {
 
   if (authLoading || loading) {
     return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
-        </div>
+      <div className="flex-1 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
       </div>
     );
   }
@@ -65,10 +61,8 @@ export default function UsagePage() {
   ];
 
   return (
-    <div className="flex h-screen">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto p-8">
-        <div className="max-w-5xl mx-auto">
+    <main className="flex-1 overflow-y-auto p-8">
+      <div className="max-w-5xl mx-auto">
           <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="text-3xl font-bold mb-1">Usage & Cost</h1>
@@ -153,7 +147,6 @@ export default function UsagePage() {
             Cached answers cost $0.
           </p>
         </div>
-      </main>
-    </div>
+    </main>
   );
 }

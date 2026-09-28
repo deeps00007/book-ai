@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sidebar } from "@/components/Sidebar";
 import { useAuth } from "@/components/AuthProvider";
 import { getBooks, getChapters, generateTestPaper } from "@/lib/api";
 import { Book, Chapter } from "@/lib/types";
@@ -135,20 +134,15 @@ export default function TestPaperPage() {
 
   if (authLoading || loading) {
     return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
-        </div>
+      <div className="flex-1 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto p-8">
-        <div className="max-w-3xl mx-auto">
+    <main className="flex-1 overflow-y-auto p-8">
+      <div className="max-w-3xl mx-auto">
           <h1 className="text-3xl font-bold mb-2">Generate Test Paper</h1>
           <p className="text-gray-500 mb-8">Create professional exam papers from your uploaded books</p>
 
@@ -314,7 +308,6 @@ export default function TestPaperPage() {
             )}
           </div>
         </div>
-      </main>
-    </div>
+    </main>
   );
 }

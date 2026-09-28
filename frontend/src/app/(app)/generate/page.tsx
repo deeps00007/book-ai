@@ -2,7 +2,6 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Sidebar } from "@/components/Sidebar";
 import { useAuth } from "@/components/AuthProvider";
 import { getBooks, generateContent, getChapters } from "@/lib/api";
 import { Book, Chapter } from "@/lib/types";
@@ -72,11 +71,8 @@ function GeneratePageInner() {
 
   if (authLoading || loading) {
     return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
-        </div>
+      <div className="flex-1 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
       </div>
     );
   }
@@ -84,9 +80,7 @@ function GeneratePageInner() {
   const selectedTypeLabel = CONTENT_TYPES.find((t) => t.type === selectedType)?.label;
 
   return (
-    <div className="flex h-screen">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto p-8">
+    <main className="flex-1 overflow-y-auto p-8">
         <div className="max-w-4xl mx-auto">
           {preselectedBookId && (
             <button
@@ -229,15 +223,14 @@ function GeneratePageInner() {
             )}
           </div>
         </div>
-      </main>
-    </div>
+    </main>
   );
 }
 
 export default function GeneratePage() {
   return (
     <Suspense fallback={
-      <div className="flex h-screen items-center justify-center">
+      <div className="flex-1 h-screen items-center justify-center">
         <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
       </div>
     }>

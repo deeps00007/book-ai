@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Sidebar } from "@/components/Sidebar";
 import { useAuth } from "@/components/AuthProvider";
 import { getBooks } from "@/lib/api";
 import { Book as BookType } from "@/lib/types";
@@ -35,20 +34,15 @@ export default function BooksPage() {
 
   if (authLoading || loading) {
     return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
-        </div>
+      <div className="flex-1 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto p-8">
-        <div className="max-w-5xl mx-auto">
+    <main className="flex-1 overflow-y-auto p-8">
+      <div className="max-w-5xl mx-auto">
           <div className="flex items-center justify-between mb-8">
             <div>
               <h1 className="text-3xl font-bold">My Books</h1>
@@ -164,7 +158,6 @@ export default function BooksPage() {
             </div>
           )}
         </div>
-      </main>
-    </div>
+    </main>
   );
 }

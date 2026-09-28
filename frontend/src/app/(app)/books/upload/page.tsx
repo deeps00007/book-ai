@@ -2,7 +2,6 @@
 
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Sidebar } from "@/components/Sidebar";
 import { uploadBook, uploadBookViaDrive, driveConfigured } from "@/lib/api";
 import { Upload, FileText, X, Loader2, ArrowLeft, Check } from "lucide-react";
 import { useDropzone } from "react-dropzone";
@@ -60,10 +59,8 @@ export default function UploadPage() {
   };
 
   return (
-    <div className="flex h-screen">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto p-8">
-        <div className="max-w-2xl mx-auto">
+    <main className="flex-1 overflow-y-auto p-8">
+      <div className="max-w-2xl mx-auto">
           <button onClick={() => router.push("/books")}
             className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mb-6">
             <ArrowLeft className="w-4 h-4" />Back to Books
@@ -143,7 +140,6 @@ export default function UploadPage() {
             </div>
           )}
         </div>
-      </main>
-    </div>
+    </main>
   );
 }

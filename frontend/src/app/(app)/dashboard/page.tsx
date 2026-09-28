@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Sidebar } from "@/components/Sidebar";
 import { useAuth } from "@/components/AuthProvider";
 import { getBooks, uploadBook, askQuestion } from "@/lib/api";
 import { getChatSessions } from "@/lib/api";
@@ -55,20 +54,15 @@ export default function DashboardPage() {
 
   if (authLoading || loading) {
     return (
-      <div className="flex h-screen">
-        <Sidebar />
-        <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
-        </div>
+      <div className="flex-1 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-brand-600" />
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto p-8">
-        <div className="max-w-5xl mx-auto">
+    <main className="flex-1 overflow-y-auto p-8">
+      <div className="max-w-5xl mx-auto">
           <h1 className="text-3xl font-bold mb-2">Welcome, {user?.name?.split(" ")[0]}</h1>
           <p className="text-gray-500 mb-8">Your AI-powered teaching dashboard</p>
 
@@ -150,7 +144,6 @@ export default function DashboardPage() {
             )}
           </div>
         </div>
-      </main>
-    </div>
+    </main>
   );
 }
