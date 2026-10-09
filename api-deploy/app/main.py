@@ -7,6 +7,7 @@ from app.api.v1.generate import router as generate_router
 from app.api.v1.test_paper import router as test_paper_router
 from app.api.v1.api_keys import router as api_keys_router
 from app.api.v1.usage import router as usage_router
+from app.api.v1.public import router as public_router
 from app.core.database import engine, Base
 import logging
 
@@ -56,6 +57,7 @@ app.include_router(generate_router, prefix="/api/v1")
 app.include_router(test_paper_router, prefix="/api/v1")
 app.include_router(api_keys_router, prefix="/api/v1")
 app.include_router(usage_router, prefix="/api/v1")
+app.include_router(public_router, prefix="/api/v1")
 
 
 @app.get("/health")

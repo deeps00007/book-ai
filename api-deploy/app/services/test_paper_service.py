@@ -62,6 +62,7 @@ CLASS: {class_name}
 SUBJECT: {subject}
 DURATION: {duration}
 TOPIC: {topic}
+DIFFICULTY: {difficulty}
 
 BOOK CONTENT:
 {context}
@@ -71,10 +72,12 @@ QUESTION STRUCTURE (generate EXACTLY these numbers of questions):
 
 RULES:
 1. Generate EXACTLY the specified number of questions for each type.
-2. Questions MUST be based on the provided book content.
-3. Return ONLY valid JSON — no markdown, no explanations.
-4. For MCQs, include 4 options (A,B,C,D) and mark the correct answer.
-5. Number questions sequentially across all types (1, 2, 3...).
+2. Questions MUST be based on the provided book content only.
+3. Match the difficulty to the CLASS standard described above — do not make it
+   harder or easier than that class level.
+4. Return ONLY valid JSON — no markdown, no explanations.
+5. For MCQs, include 4 options (A,B,C,D) and mark the correct answer.
+6. Number questions sequentially across all types (1, 2, 3...).
 
 JSON FORMAT:
 {{
@@ -124,28 +127,43 @@ async def generate_test_paper_questions(
     question_types: list[dict],
     topic: str = "",
     user_id: str = None,
+    difficulty: str = "",
 ) -> dict:
     book = await db.get(Book, book_id)
     if not book:
         raise ValueError("Book not found")
 
-    all_chunks = []
-    for ch_id in chapter_ids:
-        chunks = await retrieve_relevant_chunks(db, book_id, ", ".join(
-            qt["label"] for qt in question_types
-        ), top_k=6, chapter_id=ch_id, user_id=user_id)
-        all_chunks.extend(chunks)
-
-    if not all_chunks:
+    # Pull chunks straight from the selected chapters — deterministic and fast
+    # (no embedding/rerank round-trips, which otherwise risk serverless timeouts).
+    if chapter_ids:
         result = await db.execute(
-            select(BookChunk).where(BookChunk.book_id == book_id).limit(10)
+            select(BookChunk)
+            .where(BookChunk.book_id == book_id, BookChunk.chapter_id.in_(chapter_ids))
+            .order_by(BookChunk.chunk_index)
         )
-        all_chunks = [
-            {"id": c.id, "content": c.content, "chunk_index": c.chunk_index, "page_start": c.page_start, "page_end": c.page_end, "similarity": 1.0}
-            for c in result.scalars().all()
-        ]
+        rows = list(result.scalars().all())
+    else:
+        rows = []
 
-    context = "\n\n---\n\n".join(c["content"][:1500] for c in all_chunks[:10])
+    if not rows:
+        result = await db.execute(
+            select(BookChunk).where(BookChunk.book_id == book_id)
+            .order_by(BookChunk.chunk_index).limit(15)
+        )
+        rows = list(result.scalars().all())
+
+    # evenly sample up to 12 chunks so the whole selected range is represented
+    if len(rows) > 12:
+        step = len(rows) / 12
+        rows = [rows[int(i * step)] for i in range(12)]
+
+    all_chunks = [
+        {"id": c.id, "content": c.content, "chunk_index": c.chunk_index,
+         "page_start": c.page_start, "page_end": c.page_end}
+        for c in rows
+    ]
+
+    context = "\n\n---\n\n".join(c["content"][:1500] for c in all_chunks[:12])
 
     prompt = TEST_PAPER_PROMPT.format(
         school_name=school_name,
@@ -155,6 +173,7 @@ async def generate_test_paper_questions(
         topic=topic or subject,
         context=context,
         question_structure=_build_structure_prompt(question_types),
+        difficulty=difficulty or "appropriate for the class level",
     )
 
     response = await llm_gateway.chat(
