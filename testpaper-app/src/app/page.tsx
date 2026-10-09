@@ -3,10 +3,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import {
-  Loader2, Upload, FileText, BookOpen, X, Check, Trash2, Download,
-  Layers, RefreshCw, GraduationCap,
+  Loader2, Upload, FileText, BookOpen, X, Trash2, Download,
+  Layers, RefreshCw, GraduationCap, Plus, Wand2,
 } from "lucide-react";
-import { listBooks, getBook, uploadBook, deleteBook, processBook, generateTestPaper } from "@/lib/api";
+import {
+  listBooks, getBook, uploadBook, deleteBook, processBook,
+  generateTestPaper, suggestPaper,
+} from "@/lib/api";
 
 interface BookItem {
   id: string;
@@ -24,9 +27,18 @@ interface ChapterItem {
   start_page: number;
   end_page: number;
 }
+interface QType {
+  type: string;
+  label: string;
+  count: number;
+  marks_per: number;
+}
 
 function classFromTitle(title: string): string {
-  const m = title.match(/(?:class|grade|std|standard)\s*(\d{1,2})/i) || title.match(/(\d{1,2})\s*(?:st|nd|rd|th)\b/i) || title.match(/(\d{1,2})\s*$/);
+  const m =
+    title.match(/(?:class|grade|std|standard)\s*(\d{1,2})/i) ||
+    title.match(/(\d{1,2})\s*(?:st|nd|rd|th)\b/i) ||
+    title.match(/(\d{1,2})\s*$/);
   return m ? `Class ${m[1]}` : "";
 }
 
@@ -43,6 +55,12 @@ export default function Home() {
   const [className, setClassName] = useState("");
   const [subject, setSubject] = useState("");
   const [duration, setDuration] = useState("1 Hour");
+
+  const [mode, setMode] = useState<"auto" | "custom">("auto");
+  const [catalog, setCatalog] = useState<QType[]>([]);
+  const [suggested, setSuggested] = useState<QType[]>([]);
+  const [questionTypes, setQuestionTypes] = useState<QType[]>([]);
+  const [addType, setAddType] = useState("");
   const [generating, setGenerating] = useState(false);
 
   const [file, setFile] = useState<File | null>(null);
@@ -63,12 +81,24 @@ export default function Home() {
 
   useEffect(() => { load(); }, [load]);
 
-  // poll while any book is still processing
   useEffect(() => {
     if (!books.some((b) => b.status !== "ready" && b.status !== "failed")) return;
     const id = setInterval(() => { load(); }, 5000);
     return () => clearInterval(id);
   }, [books, load]);
+
+  // Refresh the auto-suggestion whenever the class standard changes.
+  useEffect(() => {
+    if (!selected) return;
+    const t = setTimeout(async () => {
+      try {
+        const s = await suggestPaper(className || "Class 8");
+        setCatalog(s.catalog || []);
+        setSuggested(s.question_types || []);
+      } catch {}
+    }, 400);
+    return () => clearTimeout(t);
+  }, [className, selected]);
 
   async function openBook(b: BookItem) {
     setSelected(b);
@@ -76,11 +106,16 @@ export default function Home() {
     setSelectedChapters([]);
     setAllChapters(true);
     setSubject(b.title);
-    setClassName(classFromTitle(b.title) || "Class 8");
+    const cls = classFromTitle(b.title) || "Class 8";
+    setClassName(cls);
+    setMode("auto");
     setLoadingBook(true);
     try {
-      const detail = await getBook(b.id);
+      const [detail, s] = await Promise.all([getBook(b.id), suggestPaper(cls)]);
       setChapters(detail.chapters || []);
+      setCatalog(s.catalog || []);
+      setSuggested(s.question_types || []);
+      setQuestionTypes(s.question_types || []);
     } finally {
       setLoadingBook(false);
     }
@@ -138,6 +173,21 @@ export default function Home() {
     }
   }
 
+  function updateQType(type: string, patch: Partial<QType>) {
+    setQuestionTypes((prev) => prev.map((q) => (q.type === type ? { ...q, ...patch } : q)));
+  }
+
+  function addSelected() {
+    const c = catalog.find((x) => x.type === addType);
+    if (!c) return;
+    setQuestionTypes((prev) => [...prev, { ...c, count: 5 }]);
+    setAddType("");
+  }
+
+  const activeTypes = mode === "custom" ? questionTypes : suggested;
+  const totalQuestions = activeTypes.reduce((a, q) => a + (q.count || 0), 0);
+  const totalMarks = activeTypes.reduce((a, q) => a + (q.count || 0) * (q.marks_per || 0), 0);
+
   async function handleGenerate() {
     if (!selected) return;
     setGenerating(true);
@@ -150,6 +200,7 @@ export default function Home() {
         subject: subject || selected.title,
         duration,
         topic: subject || selected.title,
+        question_types: mode === "custom" ? questionTypes : undefined,
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -163,8 +214,6 @@ export default function Home() {
       setGenerating(false);
     }
   }
-
-  const readyBooks = useMemo(() => books.filter((b) => b.status === "ready"), [books]);
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-10">
@@ -350,7 +399,88 @@ export default function Home() {
                 </div>
               </div>
 
-              <button onClick={handleGenerate} disabled={generating || (!allChapters && selectedChapters.length === 0)}
+              {/* Question setup */}
+              <div className="mb-5">
+                <div className="flex items-center gap-2 mb-3">
+                  <label className="text-sm font-medium text-gray-700">Question paper setup</label>
+                  <div className="ml-auto inline-flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+                    <button onClick={() => setMode("auto")}
+                      className={mode === "auto" ? "bg-brand-600 text-white px-3 py-1.5 flex items-center gap-1" : "px-3 py-1.5 text-gray-600"}>
+                      <Wand2 className="w-3.5 h-3.5" /> Auto
+                    </button>
+                    <button onClick={() => setMode("custom")}
+                      className={mode === "custom" ? "bg-brand-600 text-white px-3 py-1.5" : "px-3 py-1.5 text-gray-600"}>
+                      Custom
+                    </button>
+                  </div>
+                </div>
+
+                {mode === "auto" ? (
+                  <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                    <p className="text-xs text-gray-500 mb-2">Auto-suggested for {className || "this class"}:</p>
+                    <div className="space-y-1">
+                      {suggested.length === 0 && <p className="text-sm text-gray-400">Set a class to see the suggestion.</p>}
+                      {suggested.map((q) => (
+                        <div key={q.type} className="flex justify-between text-sm">
+                          <span>{q.label}</span>
+                          <span className="text-gray-500">{q.count} × {q.marks_per} = {q.count * q.marks_per} marks</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex justify-between text-sm font-medium mt-2 pt-2 border-t border-gray-200">
+                      <span>Total</span>
+                      <span>{totalQuestions} questions · {totalMarks} marks</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="border border-gray-200 rounded-lg p-4 space-y-3">
+                    {questionTypes.length === 0 && <p className="text-sm text-gray-400">Add question types below.</p>}
+                    {questionTypes.map((q) => (
+                      <div key={q.type} className="flex items-center gap-3">
+                        <span className="flex-1 text-sm truncate">{q.label}</span>
+                        <div className="flex items-center gap-1">
+                          <input type="number" min={1} value={q.count}
+                            onChange={(e) => updateQType(q.type, { count: Math.max(1, parseInt(e.target.value) || 1) })}
+                            className="w-16 px-2 py-1.5 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-500" />
+                          <span className="text-xs text-gray-400">×</span>
+                          <input type="number" min={1} value={q.marks_per}
+                            onChange={(e) => updateQType(q.type, { marks_per: Math.max(1, parseInt(e.target.value) || 1) })}
+                            className="w-16 px-2 py-1.5 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-500" />
+                          <span className="text-xs text-gray-400">marks</span>
+                        </div>
+                        <button onClick={() => setQuestionTypes((prev) => prev.filter((x) => x.type !== q.type))}
+                          className="p-1 text-gray-400 hover:text-red-500">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <select value={addType} onChange={(e) => setAddType(e.target.value)}
+                        className="flex-1 min-w-[180px] px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-500">
+                        <option value="">Add a question type…</option>
+                        {catalog.filter((c) => !questionTypes.some((q) => q.type === c.type)).map((c) => (
+                          <option key={c.type} value={c.type}>{c.label}</option>
+                        ))}
+                      </select>
+                      <button onClick={addSelected} disabled={!addType}
+                        className="px-3 py-2 bg-brand-50 text-brand-700 rounded-lg text-sm font-medium hover:bg-brand-100 disabled:opacity-50 flex items-center gap-1">
+                        <Plus className="w-4 h-4" /> Add
+                      </button>
+                      <button onClick={() => setQuestionTypes(suggested)}
+                        className="px-3 py-2 text-gray-600 rounded-lg text-sm hover:bg-gray-100 flex items-center gap-1">
+                        <Wand2 className="w-4 h-4" /> Use suggested
+                      </button>
+                    </div>
+                    <div className="flex justify-between text-sm font-medium pt-2 border-t border-gray-200">
+                      <span>Total</span>
+                      <span>{totalQuestions} questions · {totalMarks} marks</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button onClick={handleGenerate}
+                disabled={generating || (mode === "custom" && questionTypes.length === 0)}
                 className="w-full py-3 bg-brand-600 text-white rounded-lg font-medium hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center gap-2">
                 {generating ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating paper...</> : <><Download className="w-4 h-4" /> Generate & Download PDF</>}
               </button>

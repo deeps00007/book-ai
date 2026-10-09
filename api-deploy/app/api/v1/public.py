@@ -26,6 +26,19 @@ router = APIRouter()
 PUBLIC_EMAIL = "public@testpaper.local"
 SMALL_FILE_LIMIT = 5 * 1024 * 1024
 
+# Question types a paper can be built from (used by the UI picker).
+QUESTION_TYPE_CATALOG = [
+    {"type": "mcq", "label": "Multiple Choice Questions", "marks_per": 1},
+    {"type": "fill_blank", "label": "Fill in the Blanks", "marks_per": 1},
+    {"type": "true_false", "label": "True / False", "marks_per": 1},
+    {"type": "match", "label": "Match the Following", "marks_per": 1},
+    {"type": "assertion_reason", "label": "Assertion-Reason", "marks_per": 1},
+    {"type": "very_short", "label": "Very Short Answer Questions", "marks_per": 1},
+    {"type": "short_answer", "label": "Short Answer Questions", "marks_per": 2},
+    {"type": "long_answer", "label": "Long Answer Questions", "marks_per": 5},
+    {"type": "case_study", "label": "Case Study / Source Based", "marks_per": 4},
+]
+
 
 async def _get_public_user(db: AsyncSession) -> User:
     r = await db.execute(select(User).where(User.email == PUBLIC_EMAIL))
@@ -212,6 +225,34 @@ async def public_delete_book(book_id: str):
 
 # ── Test Paper ──
 
+@router.get("/public/test-paper/suggest")
+async def public_test_paper_suggest(class_name: str = "Class 8"):
+    """Auto-suggested difficulty + question mix for a class standard."""
+    difficulty, structure = _difficulty_and_structure(class_name)
+    return {
+        "difficulty": difficulty,
+        "question_types": structure,
+        "total_marks": sum(q["count"] * q["marks_per"] for q in structure),
+        "catalog": QUESTION_TYPE_CATALOG,
+    }
+
+
+def _clean_question_types(raw: list) -> list[dict]:
+    out = []
+    for q in raw or []:
+        qtype = str(q.get("type") or "").strip()
+        if not qtype:
+            continue
+        try:
+            count = max(1, min(50, int(q.get("count", 1))))
+            marks = max(1, min(20, int(q.get("marks_per", 1))))
+        except (TypeError, ValueError):
+            continue
+        label = str(q.get("label") or qtype).strip()
+        out.append({"type": qtype, "label": label, "count": count, "marks_per": marks})
+    return out
+
+
 @router.post("/public/test-paper")
 async def public_test_paper(req: dict = Body(...)):
     book_id = req.get("book_id")
@@ -240,7 +281,14 @@ async def public_test_paper(req: dict = Body(...)):
 
         if not class_name:
             class_name = "Class 8"
-        difficulty, question_types = _difficulty_and_structure(class_name)
+
+        # Custom question mix if the user built one, else the class-based suggestion.
+        custom = _clean_question_types(req.get("question_types") or [])
+        if custom:
+            question_types = custom
+            difficulty = (req.get("difficulty") or "").strip() or _difficulty_and_structure(class_name)[0]
+        else:
+            difficulty, question_types = _difficulty_and_structure(class_name)
 
         data = await generate_test_paper_questions(
             db=db, book_id=book_id, chapter_ids=chapter_ids,

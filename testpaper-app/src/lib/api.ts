@@ -158,6 +158,10 @@ async function uploadViaStorage(
   });
 }
 
+export function suggestPaper(class_name: string) {
+  return req(`/public/test-paper/suggest?class_name=${encodeURIComponent(class_name)}`);
+}
+
 export async function generateTestPaper(payload: {
   book_id: string;
   chapter_ids: string[];
@@ -166,6 +170,8 @@ export async function generateTestPaper(payload: {
   subject: string;
   duration: string;
   topic?: string;
+  difficulty?: string;
+  question_types?: Array<{ type: string; label: string; count: number; marks_per: number }>;
 }): Promise<Blob> {
   const res = await fetch(`${API_BASE}/public/test-paper`, {
     method: "POST",

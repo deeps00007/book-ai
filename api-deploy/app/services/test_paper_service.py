@@ -76,7 +76,13 @@ RULES:
 3. Match the difficulty to the CLASS standard described above — do not make it
    harder or easier than that class level.
 4. Return ONLY valid JSON — no markdown, no explanations.
-5. For MCQs, include 4 options (A,B,C,D) and mark the correct answer.
+5. Use the exact "type" value given for each question. Supported types:
+   - "mcq": 4 options {{A,B,C,D}}; "answer" = the correct letter.
+   - "assertion_reason": 4 options {{A,B,C,D}}; "answer" = the correct letter.
+   - "true_false": "answer" = "True" or "False".
+   - "fill_blank": write the question with a blank "__________"; "answer" = the missing word.
+   - "match": put the two columns in the question text as "Column A: ... | Column B: ...".
+   - "very_short", "short_answer", "long_answer", "case_study": just "question" (+ optional "answer").
 6. Number questions sequentially across all types (1, 2, 3...).
 
 JSON FORMAT:
@@ -88,13 +94,13 @@ JSON FORMAT:
       "question": "What is...?",
       "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}},
       "answer": "B",
-      "marks": 2
+      "marks": 1
     }},
     {{
       "number": 5,
       "type": "short_answer",
       "question": "Explain the process of...",
-      "marks": 5
+      "marks": 2
     }}
   ]
 }}
@@ -314,7 +320,7 @@ def build_test_paper_pdf(data: dict) -> bytes:
 
         pdf.ln(1)
 
-        if q_type == "mcq" and q.get("options"):
+        if q_type in ("mcq", "assertion_reason") and q.get("options"):
             pdf.set_font("Helvetica", "", 10)
             for opt_key in ["A", "B", "C", "D"]:
                 opt_text = s(q["options"].get(opt_key, ""))
@@ -324,13 +330,18 @@ def build_test_paper_pdf(data: dict) -> bytes:
                         pdf.set_x(margin_x + 15)
                         pdf.cell(content_w - 15, 6, line, ln=True)
 
-        if q_type in ("short_answer", "long_answer", "answer"):
-            line_count = 3 if q_type == "short_answer" else 5
-            for _ in range(line_count):
-                pdf.set_draw_color(180, 180, 180)
-                pdf.set_line_width(0.2)
-                pdf.line(margin_x + 15, pdf.get_y() + 3, margin_x + content_w, pdf.get_y() + 3)
-                pdf.ln(6)
+        line_count = {
+            "very_short": 1,
+            "short_answer": 3,
+            "long_answer": 5,
+            "case_study": 5,
+            "answer": 5,
+        }.get(q_type, 0)
+        for _ in range(line_count):
+            pdf.set_draw_color(180, 180, 180)
+            pdf.set_line_width(0.2)
+            pdf.line(margin_x + 15, pdf.get_y() + 3, margin_x + content_w, pdf.get_y() + 3)
+            pdf.ln(6)
 
         pdf.ln(3)
 
