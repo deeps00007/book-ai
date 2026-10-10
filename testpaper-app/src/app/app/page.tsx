@@ -62,23 +62,34 @@ function classFromTitle(title: string): string {
   return m ? `Class ${m[1]}` : "";
 }
 
+const ACCENTS: Record<string, string> = {
+  emerald: "bg-emerald-50 text-emerald-600",
+  violet: "bg-violet-50 text-violet-600",
+  amber: "bg-amber-50 text-amber-600",
+  rose: "bg-rose-50 text-rose-600",
+  sky: "bg-sky-50 text-sky-600",
+  teal: "bg-teal-50 text-teal-600",
+};
+
 function Section({
   id,
   icon,
   title,
   action,
+  accent = "sky",
   children,
 }: {
   id?: string;
   icon: React.ReactNode;
   title: string;
   action?: React.ReactNode;
+  accent?: keyof typeof ACCENTS;
   children: React.ReactNode;
 }) {
   return (
-    <section id={id} className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 scroll-mt-24">
+    <section id={id} className="animate-fade-up bg-white rounded-2xl border border-gray-200 shadow-sm p-6 scroll-mt-24">
       <div className="flex items-center gap-3 mb-5">
-        <div className="w-9 h-9 rounded-xl bg-brand-50 flex items-center justify-center text-brand-600">
+        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${ACCENTS[accent]}`}>
           {icon}
         </div>
         <h2 className="font-semibold text-gray-900">{title}</h2>
@@ -152,12 +163,28 @@ export default function AppPage() {
     return () => clearTimeout(t);
   }, [className, selected]);
 
-  // first-visit tour
+  // first-visit tour — auto-select a ready (sample) book so the full tour is available
+  const tourInit = useRef(false);
   useEffect(() => {
+    if (tourInit.current || loading) return;
+    tourInit.current = true;
     try {
-      if (!localStorage.getItem("tp_tour_v1")) setTourOpen(true);
+      if (!localStorage.getItem("tp_tour_v1")) {
+        const demo = books.find((b) => b.status === "ready");
+        if (demo) openBook(demo);
+        setTourOpen(true);
+      }
     } catch {}
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, books]);
+
+  function startTour() {
+    if (!selected) {
+      const demo = books.find((b) => b.status === "ready");
+      if (demo) openBook(demo);
+    }
+    setTourOpen(true);
+  }
   function closeTour() {
     try { localStorage.setItem("tp_tour_v1", "1"); } catch {}
     setTourOpen(false);
@@ -343,7 +370,7 @@ export default function AppPage() {
   const tourSteps: TourStep[] = [
     { title: "Welcome 👋", body: "This quick tour shows how to turn a textbook into a ready-to-print question paper. Use Next / Back to move, or press Esc to skip. You can replay it anytime with the 'How it works' button." },
     { target: "tour-upload", title: "1 · Upload a textbook", body: "Drag & drop a PDF here (or click to browse). The book is stored in your Google Drive and automatically split into chapters. Processing usually takes a few seconds up to a couple of minutes for large books." },
-    { target: "tour-books", title: "2 · Your library", body: "Every book you upload appears here with its status. When it shows 'ready', click it (or the Select button) to build a paper from it. You can also re-process a failed book or delete it." },
+    { target: "tour-books", title: "2 · Pick a book", body: "Every book you upload appears here with its status. A sample book is already included — we've selected it for you so you can try the whole flow. Click any 'ready' book (or its Select button) to build a paper from it." },
     ...(selected
       ? [
           { target: "tour-config", title: "3 · Chapters, class & details", body: "Keep 'Whole book' for full coverage, or untick it to pick specific chapters. Set the Class standard — the question difficulty adapts to it automatically. Also set the subject, school name and duration here." } as TourStep,
@@ -367,7 +394,7 @@ export default function AppPage() {
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur border-b border-gray-200">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-brand-500 to-indigo-600 flex items-center justify-center shadow-sm">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 flex items-center justify-center shadow-sm">
             <GraduationCap className="w-5 h-5 text-white" />
           </div>
           <div className="leading-tight">
@@ -380,8 +407,8 @@ export default function AppPage() {
               <Home className="w-4 h-4" /> Home
             </Link>
             <button
-              onClick={() => setTourOpen(true)}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 border border-gray-200"
+              onClick={startTour}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 border border-gray-200 transition-colors"
             >
               <HelpCircle className="w-4 h-4" /> How it works
             </button>
@@ -391,7 +418,7 @@ export default function AppPage() {
 
       <div className="max-w-6xl mx-auto px-6 py-8 space-y-8">
         {/* Hero + stepper */}
-        <section className="rounded-2xl p-6 sm:p-8 text-white bg-gradient-to-r from-brand-600 via-brand-600 to-indigo-600 shadow-sm">
+        <section className="animate-fade-up rounded-2xl p-6 sm:p-8 text-white bg-gradient-to-r from-blue-600 via-violet-600 to-fuchsia-600 shadow-sm">
           <h1 className="text-2xl sm:text-3xl font-bold">Create a class-ready question paper in minutes</h1>
           <p className="text-white/85 mt-2 max-w-2xl">
             Upload a textbook, choose the chapters and class standard, and let AI draft a paper you can fully edit before downloading.
@@ -403,8 +430,8 @@ export default function AppPage() {
               const active = n === currentStep;
               return (
                 <div key={label} className="flex items-center gap-2">
-                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold ${
-                    active ? "bg-white text-brand-700" : done ? "bg-white/90 text-brand-700" : "bg-white/20 text-white"
+                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold transition-colors ${
+                    active ? "bg-white text-brand-700" : done ? "bg-emerald-400 text-white" : "bg-white/20 text-white"
                   }`}>
                     {done ? <Check className="w-3.5 h-3.5" /> : n}
                   </span>
@@ -417,7 +444,7 @@ export default function AppPage() {
         </section>
 
         {/* Upload */}
-        <Section id="tour-upload" icon={<Upload className="w-5 h-5" />} title="Upload a book">
+        <Section id="tour-upload" accent="emerald" icon={<Upload className="w-5 h-5" />} title="Upload a book">
           {!file ? (
             <div
               {...getRootProps()}
@@ -426,8 +453,8 @@ export default function AppPage() {
               }`}
             >
               <input {...getInputProps()} ref={fileInputRef} />
-              <div className="w-14 h-14 rounded-2xl bg-brand-50 flex items-center justify-center mx-auto mb-3">
-                <Upload className="w-7 h-7 text-brand-600" />
+              <div className="w-14 h-14 rounded-2xl bg-emerald-50 flex items-center justify-center mx-auto mb-3">
+                <Upload className="w-7 h-7 text-emerald-600" />
               </div>
               <p className="font-medium text-gray-700">
                 {isDragActive ? "Drop your PDF here" : "Drag & drop a PDF, or click to browse"}
@@ -468,7 +495,7 @@ export default function AppPage() {
                     <span>{progressMsg}</span><span className="font-medium text-brand-600">{progress}%</span>
                   </div>
                   <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
-                    <div className="h-full bg-gradient-to-r from-brand-500 to-indigo-600 rounded-full transition-all" style={{ width: `${progress}%` }} />
+                    <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
                   </div>
                 </div>
               )}
@@ -481,7 +508,7 @@ export default function AppPage() {
         </Section>
 
         {/* Books */}
-        <Section id="tour-books" icon={<BookOpen className="w-5 h-5" />} title="Your books"
+        <Section id="tour-books" accent="violet" icon={<BookOpen className="w-5 h-5" />} title="Your books"
           action={<button onClick={load} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg" title="Refresh"><RefreshCw className="w-4 h-4" /></button>}>
           {loading ? (
             <div className="grid gap-3">
@@ -536,7 +563,7 @@ export default function AppPage() {
 
         {/* Configure */}
         {selected && (
-          <Section id="tour-config" icon={<Layers className="w-5 h-5" />} title={`Configure — ${selected.title}`}>
+          <Section id="tour-config" accent="amber" icon={<Layers className="w-5 h-5" />} title={`Configure — ${selected.title}`}>
             {loadingBook ? (
               <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-brand-600" /></div>
             ) : (
@@ -673,7 +700,7 @@ export default function AppPage() {
 
                 <button id="tour-generate" onClick={handleGenerate}
                   disabled={generating || (mode === "custom" && questionTypes.length === 0)}
-                  className="mt-6 w-full py-3.5 bg-gradient-to-r from-brand-600 to-indigo-600 text-white rounded-xl font-semibold hover:opacity-95 disabled:opacity-50 flex items-center justify-center gap-2 transition shadow-sm">
+                  className="mt-6 w-full py-3.5 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white rounded-xl font-semibold hover:opacity-95 hover:shadow-md disabled:opacity-50 flex items-center justify-center gap-2 transition-all shadow-sm">
                   {generating ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating questions...</> : <><Wand2 className="w-4 h-4" /> Generate questions</>}
                 </button>
               </>
@@ -685,7 +712,7 @@ export default function AppPage() {
         {paper && (
           <section id="editor" className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 scroll-mt-24">
             <div className="flex items-center gap-3 mb-5">
-              <div className="w-9 h-9 rounded-xl bg-brand-50 flex items-center justify-center text-brand-600">
+              <div className="w-9 h-9 rounded-xl bg-rose-50 flex items-center justify-center text-rose-600">
                 <ClipboardList className="w-5 h-5" />
               </div>
               <h2 className="font-semibold text-gray-900">Edit paper</h2>

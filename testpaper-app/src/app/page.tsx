@@ -5,12 +5,12 @@ import {
 } from "lucide-react";
 
 const features = [
-  { icon: Upload, title: "Upload any textbook", body: "Drop a PDF — it's stored in your Google Drive and processed chapter-by-chapter automatically." },
-  { icon: Layers, title: "Chapter-wise papers", body: "Pick the whole book or just the chapters you want the paper to cover." },
-  { icon: Sparkles, title: "Difficulty by class", body: "Set the class standard and the question difficulty adapts automatically." },
-  { icon: Wand2, title: "Auto or custom format", body: "Use the AI-suggested mix, or choose your own question types, counts and marks." },
-  { icon: ClipboardList, title: "Full editor", body: "Edit any question, change marks, reorder or delete — before you export." },
-  { icon: Download, title: "Preview & download", body: "See the finished paper, then download a clean, print-ready PDF." },
+  { icon: Upload, color: "bg-emerald-50 text-emerald-600", title: "Upload any textbook", body: "Drop a PDF — it's stored in your Google Drive and processed chapter-by-chapter automatically." },
+  { icon: Layers, color: "bg-violet-50 text-violet-600", title: "Chapter-wise papers", body: "Pick the whole book or just the chapters you want the paper to cover." },
+  { icon: Sparkles, color: "bg-amber-50 text-amber-600", title: "Difficulty by class", body: "Set the class standard and the question difficulty adapts automatically." },
+  { icon: Wand2, color: "bg-sky-50 text-sky-600", title: "Auto or custom format", body: "Use the AI-suggested mix, or choose your own question types, counts and marks." },
+  { icon: ClipboardList, color: "bg-rose-50 text-rose-600", title: "Full editor", body: "Edit any question, change marks, reorder or delete — before you export." },
+  { icon: Download, color: "bg-teal-50 text-teal-600", title: "Preview & download", body: "See the finished paper, then download a clean, print-ready PDF." },
 ];
 
 const steps = [
@@ -40,13 +40,13 @@ export default function Landing() {
       {/* Hero */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-b from-brand-50 to-white -z-10" />
-        <div className="max-w-6xl mx-auto px-6 py-20 text-center">
-          <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-100 text-brand-700 text-xs font-medium mb-5">
+        <div className="max-w-6xl mx-auto px-6 py-20 text-center animate-fade-up">
+          <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-violet-100 text-violet-700 text-xs font-medium mb-5">
             <Sparkles className="w-3.5 h-3.5" /> AI-powered question papers
           </span>
           <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-gray-900 max-w-3xl mx-auto leading-tight">
             Turn any textbook into a{" "}
-            <span className="bg-gradient-to-r from-brand-600 to-indigo-600 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-violet-600 via-fuchsia-600 to-pink-600 bg-clip-text text-transparent">
               ready-to-print question paper
             </span>
           </h1>
@@ -55,7 +55,7 @@ export default function Landing() {
           </p>
           <div className="mt-8 flex items-center justify-center gap-3">
             <Link href="/app"
-              className="flex items-center gap-2 px-6 py-3 rounded-xl text-base font-semibold bg-brand-600 text-white hover:bg-brand-700 shadow-sm transition-colors">
+              className="flex items-center gap-2 px-6 py-3 rounded-xl text-base font-semibold bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white hover:opacity-95 hover:shadow-md shadow-sm transition-all">
               Get started <ArrowRight className="w-4 h-4" />
             </Link>
             <a href="#how"
@@ -74,9 +74,9 @@ export default function Landing() {
         <h2 className="text-2xl sm:text-3xl font-bold text-center text-gray-900">Everything you need</h2>
         <p className="text-center text-gray-500 mt-2 mb-10">From raw PDF to a polished exam paper.</p>
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {features.map((f) => (
-            <div key={f.title} className="rounded-2xl border border-gray-200 p-6 hover:shadow-md hover:border-brand-200 transition-all bg-white">
-              <div className="w-11 h-11 rounded-xl bg-brand-50 flex items-center justify-center text-brand-600 mb-4">
+          {features.map((f, i) => (
+            <div key={f.title} className={`animate-fade-up delay-${i + 1} rounded-2xl border border-gray-200 p-6 hover:shadow-md hover:-translate-y-0.5 transition-all bg-white`}>
+              <div className={`w-11 h-11 rounded-xl flex items-center justify-center mb-4 ${f.color}`}>
                 <f.icon className="w-5 h-5" />
               </div>
               <h3 className="font-semibold text-gray-900 mb-1.5">{f.title}</h3>
@@ -94,7 +94,7 @@ export default function Landing() {
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {steps.map((s) => (
               <div key={s.n} className="relative">
-                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-brand-500 to-indigo-600 text-white flex items-center justify-center font-bold shadow-sm">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white flex items-center justify-center font-bold shadow-sm">
                   {s.n}
                 </div>
                 <h3 className="font-semibold text-gray-900 mt-4 mb-1">{s.title}</h3>
@@ -107,7 +107,7 @@ export default function Landing() {
 
       {/* CTA */}
       <section className="max-w-6xl mx-auto px-6 py-16">
-        <div className="rounded-3xl bg-gradient-to-r from-brand-600 to-indigo-600 px-8 py-12 text-center text-white shadow-sm">
+        <div className="rounded-3xl bg-gradient-to-r from-blue-600 via-violet-600 to-fuchsia-600 px-8 py-12 text-center text-white shadow-sm animate-fade-up">
           <BookOpen className="w-10 h-10 mx-auto mb-4 opacity-90" />
           <h2 className="text-2xl sm:text-3xl font-bold">Ready to make your first paper?</h2>
           <p className="text-white/85 mt-2 mb-7">It takes less than a minute to get started.</p>
