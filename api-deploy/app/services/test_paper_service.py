@@ -245,8 +245,13 @@ def build_test_paper_pdf(data: dict) -> bytes:
     class_name = s(data.get("class_name") or "")
     subject = s(data.get("subject") or "")
     duration = s(data.get("duration") or "")
-    total_marks = data.get("total_marks", 0)
     questions = data.get("questions", [])
+    # total reflects the (possibly edited) questions, falling back to the header value
+    try:
+        computed = sum(int(q.get("marks", 0) or 0) for q in questions)
+    except (TypeError, ValueError):
+        computed = 0
+    total_marks = computed or data.get("total_marks", 0)
 
     left, right = 15, 195
     content_w = right - left  # 180

@@ -4,11 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import {
   Loader2, Upload, FileText, BookOpen, X, Trash2, Download,
-  Layers, RefreshCw, GraduationCap, Plus, Wand2,
+  Layers, RefreshCw, GraduationCap, Plus, Wand2, ChevronUp, ChevronDown,
 } from "lucide-react";
 import {
   listBooks, getBook, uploadBook, deleteBook, processBook,
-  generateTestPaper, suggestPaper,
+  generatePaperQuestions, buildPaperPdf, suggestPaper,
 } from "@/lib/api";
 
 interface BookItem {
@@ -32,6 +32,13 @@ interface QType {
   label: string;
   count: number;
   marks_per: number;
+}
+interface Q {
+  type: string;
+  question: string;
+  marks: number;
+  options?: Record<string, string>;
+  answer?: string;
 }
 
 function classFromTitle(title: string): string {
@@ -62,6 +69,8 @@ export default function Home() {
   const [questionTypes, setQuestionTypes] = useState<QType[]>([]);
   const [addType, setAddType] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [building, setBuilding] = useState(false);
+  const [paper, setPaper] = useState<Q[] | null>(null);
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
 
   const [file, setFile] = useState<File | null>(null);
@@ -88,7 +97,6 @@ export default function Home() {
     return () => clearInterval(id);
   }, [books, load]);
 
-  // Refresh the auto-suggestion whenever the class standard changes.
   useEffect(() => {
     if (!selected) return;
     const t = setTimeout(async () => {
@@ -107,6 +115,7 @@ export default function Home() {
     setSelectedChapters([]);
     setAllChapters(true);
     setSubject(b.title);
+    setPaper(null);
     const cls = classFromTitle(b.title) || "Class 8";
     setClassName(cls);
     setMode("auto");
@@ -177,7 +186,6 @@ export default function Home() {
   function updateQType(type: string, patch: Partial<QType>) {
     setQuestionTypes((prev) => prev.map((q) => (q.type === type ? { ...q, ...patch } : q)));
   }
-
   function addSelected() {
     const c = catalog.find((x) => x.type === addType);
     if (!c) return;
@@ -192,8 +200,9 @@ export default function Home() {
   async function handleGenerate() {
     if (!selected) return;
     setGenerating(true);
+    setPaper(null);
     try {
-      const blob = await generateTestPaper({
+      const data = await generatePaperQuestions({
         book_id: selected.id,
         chapter_ids: allChapters ? [] : selectedChapters,
         school_name: school,
@@ -203,8 +212,8 @@ export default function Home() {
         topic: subject || selected.title,
         question_types: mode === "custom" ? questionTypes : undefined,
       });
-      const url = URL.createObjectURL(blob);
-      setPreview({ url, name: `Test_Paper_${(subject || "paper").replace(/\s+/g, "_")}.pdf` });
+      setPaper(data.questions || []);
+      setTimeout(() => document.getElementById("editor")?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch (e: any) {
       alert(e.message || "Generation failed");
     } finally {
@@ -212,10 +221,69 @@ export default function Home() {
     }
   }
 
+  // ── editor helpers ──
+  function setQ(i: number, patch: Partial<Q>) {
+    setPaper((p) => (p ? p.map((q, j) => (j === i ? { ...q, ...patch } : q)) : p));
+  }
+  function setOption(i: number, key: string, val: string) {
+    setPaper((p) => (p ? p.map((q, j) => (j === i ? { ...q, options: { ...(q.options || {}), [key]: val } } : q)) : p));
+  }
+  function moveQ(i: number, dir: number) {
+    setPaper((p) => {
+      if (!p) return p;
+      const j = i + dir;
+      if (j < 0 || j >= p.length) return p;
+      const copy = [...p];
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+      return copy;
+    });
+  }
+  function removeQ(i: number) {
+    setPaper((p) => (p ? p.filter((_, j) => j !== i) : p));
+  }
+  function addQ() {
+    setPaper((p) => [...(p || []), { type: "short_answer", question: "", marks: 2 }]);
+  }
+  const labelFor = (type: string) => catalog.find((c) => c.type === type)?.label || type;
+  const editableTypes = catalog.length ? catalog : [
+    { type: "mcq", label: "Multiple Choice Questions", count: 1, marks_per: 1 },
+    { type: "fill_blank", label: "Fill in the Blanks", count: 1, marks_per: 1 },
+    { type: "true_false", label: "True / False", count: 1, marks_per: 1 },
+    { type: "very_short", label: "Very Short Answer Questions", count: 1, marks_per: 1 },
+    { type: "short_answer", label: "Short Answer Questions", count: 1, marks_per: 2 },
+    { type: "long_answer", label: "Long Answer Questions", count: 1, marks_per: 5 },
+  ];
+
+  async function previewPdf() {
+    if (!paper) return;
+    setBuilding(true);
+    try {
+      const data = {
+        school_name: school,
+        class_name: className,
+        subject: subject || selected?.title || "",
+        duration,
+        questions: paper.map((q, i) => ({ ...q, number: i + 1 })),
+      };
+      const blob = await buildPaperPdf(data);
+      const url = URL.createObjectURL(blob);
+      setPreview({ url, name: `Test_Paper_${(subject || "paper").replace(/\s+/g, "_")}.pdf` });
+    } catch (e: any) {
+      alert(e.message || "PDF build failed");
+    } finally {
+      setBuilding(false);
+    }
+  }
+
   function closePreview() {
     if (preview) URL.revokeObjectURL(preview.url);
     setPreview(null);
   }
+
+  const paperMarks = useMemo(
+    () => (paper || []).reduce((a, q) => a + (Number(q.marks) || 0), 0),
+    [paper]
+  );
 
   return (
     <div className="max-w-5xl mx-auto px-6 py-10">
@@ -225,7 +293,7 @@ export default function Home() {
         </div>
         <div>
           <h1 className="text-2xl font-bold">Test Paper Generator</h1>
-          <p className="text-sm text-gray-500">Upload a textbook, pick chapters, generate a class-appropriate paper.</p>
+          <p className="text-sm text-gray-500">Upload a textbook, pick chapters, generate &amp; edit a class-appropriate paper.</p>
         </div>
       </header>
 
@@ -343,7 +411,7 @@ export default function Home() {
 
       {/* Generate */}
       {selected && (
-        <section className="bg-white rounded-2xl border border-gray-200 p-6">
+        <section className="bg-white rounded-2xl border border-gray-200 p-6 mb-8">
           <h2 className="font-semibold mb-4 flex items-center gap-2">
             <Layers className="w-5 h-5 text-brand-600" /> Generate test paper — {selected.title}
           </h2>
@@ -401,7 +469,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Question setup */}
               <div className="mb-5">
                 <div className="flex items-center gap-2 mb-3">
                   <label className="text-sm font-medium text-gray-700">Question paper setup</label>
@@ -484,10 +551,82 @@ export default function Home() {
               <button onClick={handleGenerate}
                 disabled={generating || (mode === "custom" && questionTypes.length === 0)}
                 className="w-full py-3 bg-brand-600 text-white rounded-lg font-medium hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center gap-2">
-                {generating ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating paper...</> : <><Download className="w-4 h-4" /> Generate & Download PDF</>}
+                {generating ? <><Loader2 className="w-4 h-4 animate-spin" /> Generating questions...</> : <><Wand2 className="w-4 h-4" /> Generate questions</>}
               </button>
             </>
           )}
+        </section>
+      )}
+
+      {/* Editor */}
+      {paper && (
+        <section id="editor" className="bg-white rounded-2xl border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold flex items-center gap-2">
+              <FileText className="w-5 h-5 text-brand-600" /> Edit paper
+            </h2>
+            <span className="text-sm text-gray-500">{paper.length} questions · {paperMarks} marks</span>
+          </div>
+
+          <div className="space-y-3 mb-4">
+            {paper.map((q, i) => (
+              <div key={i} className="border border-gray-200 rounded-xl p-3 bg-gray-50/60">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="w-6 text-sm font-semibold text-gray-700">{i + 1}.</span>
+                  <select value={q.type} onChange={(e) => setQ(i, { type: e.target.value })}
+                    className="text-xs px-2 py-1 border border-gray-300 rounded-md bg-white outline-none focus:ring-2 focus:ring-brand-500">
+                    {editableTypes.map((t) => <option key={t.type} value={t.type}>{t.label}</option>)}
+                  </select>
+                  <div className="flex items-center gap-1 ml-auto">
+                    <input type="number" min={1} value={q.marks}
+                      onChange={(e) => setQ(i, { marks: Math.max(1, parseInt(e.target.value) || 1) })}
+                      className="w-16 px-2 py-1 border border-gray-300 rounded-md text-sm outline-none focus:ring-2 focus:ring-brand-500" />
+                    <span className="text-xs text-gray-400 mr-2">marks</span>
+                    <button onClick={() => moveQ(i, -1)} disabled={i === 0}
+                      className="p-1 text-gray-400 hover:text-gray-700 disabled:opacity-30" title="Move up">
+                      <ChevronUp className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => moveQ(i, 1)} disabled={i === paper.length - 1}
+                      className="p-1 text-gray-400 hover:text-gray-700 disabled:opacity-30" title="Move down">
+                      <ChevronDown className="w-4 h-4" />
+                    </button>
+                    <button onClick={() => removeQ(i)} className="p-1 text-gray-400 hover:text-red-500" title="Delete">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+                <textarea value={q.question} rows={2}
+                  onChange={(e) => setQ(i, { question: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-500 resize-y"
+                  placeholder="Question text..." />
+                {(q.type === "mcq" || q.type === "assertion_reason") && (
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    {["A", "B", "C", "D"].map((k) => (
+                      <input key={k} value={(q.options || {})[k] || ""}
+                        onChange={(e) => setOption(i, k, e.target.value)}
+                        placeholder={`Option ${k}`}
+                        className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-brand-500" />
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <button onClick={addQ}
+              className="px-4 py-2.5 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-1.5">
+              <Plus className="w-4 h-4" /> Add question
+            </button>
+            <button onClick={handleGenerate}
+              className="px-4 py-2.5 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 flex items-center gap-1.5">
+              <RefreshCw className="w-4 h-4" /> Regenerate
+            </button>
+            <button onClick={previewPdf} disabled={building || paper.length === 0}
+              className="ml-auto px-5 py-2.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 disabled:opacity-50 flex items-center gap-2">
+              {building ? <><Loader2 className="w-4 h-4 animate-spin" /> Building...</> : <><Download className="w-4 h-4" /> Preview &amp; Download</>}
+            </button>
+          </div>
         </section>
       )}
 

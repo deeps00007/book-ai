@@ -253,13 +253,12 @@ def _clean_question_types(raw: list) -> list[dict]:
     return out
 
 
-@router.post("/public/test-paper")
-async def public_test_paper(req: dict = Body(...)):
+async def _paper_data_from_request(req: dict) -> dict:
     book_id = req.get("book_id")
     if not book_id:
         raise HTTPException(status_code=400, detail="book_id is required")
 
-    class_name = (req.get("class_name") or "").strip()
+    class_name = (req.get("class_name") or "").strip() or "Class 8"
     subject = (req.get("subject") or "").strip() or "General"
     school_name = (req.get("school_name") or "").strip() or "Examination"
     duration = (req.get("duration") or "").strip() or "1 Hour"
@@ -279,9 +278,6 @@ async def public_test_paper(req: dict = Body(...)):
                 select(Chapter).where(Chapter.book_id == book_id).order_by(Chapter.order)
             )).scalars().all()]
 
-        if not class_name:
-            class_name = "Class 8"
-
         # Custom question mix if the user built one, else the class-based suggestion.
         custom = _clean_question_types(req.get("question_types") or [])
         if custom:
@@ -290,7 +286,7 @@ async def public_test_paper(req: dict = Body(...)):
         else:
             difficulty, question_types = _difficulty_and_structure(class_name)
 
-        data = await generate_test_paper_questions(
+        return await generate_test_paper_questions(
             db=db, book_id=book_id, chapter_ids=chapter_ids,
             school_name=school_name, class_name=class_name, subject=subject,
             duration=duration, question_types=question_types,
@@ -298,10 +294,33 @@ async def public_test_paper(req: dict = Body(...)):
             difficulty=difficulty,
         )
 
+
+def _pdf_response(data: dict) -> Response:
     pdf_bytes = build_test_paper_pdf(data)
-    safe = subject.replace(" ", "_").replace("/", "-")
-    filename = f"Test_Paper_{safe}_{class_name.replace(' ', '_')}.pdf"
+    subject = (data.get("subject") or "paper").replace(" ", "_").replace("/", "-")
+    class_name = (data.get("class_name") or "").replace(" ", "_")
+    filename = f"Test_Paper_{subject}_{class_name}.pdf".replace("__", "_")
     return Response(
         content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.post("/public/test-paper/questions")
+async def public_test_paper_questions(req: dict = Body(...)):
+    """Generate the paper as structured JSON (editable in the UI)."""
+    return await _paper_data_from_request(req)
+
+
+@router.post("/public/test-paper/pdf")
+async def public_test_paper_pdf(req: dict = Body(...)):
+    """Build a PDF from (possibly edited) paper data."""
+    if not req.get("questions"):
+        raise HTTPException(status_code=400, detail="No questions to render")
+    return _pdf_response(req)
+
+
+@router.post("/public/test-paper")
+async def public_test_paper(req: dict = Body(...)):
+    data = await _paper_data_from_request(req)
+    return _pdf_response(data)

@@ -162,6 +162,37 @@ export function suggestPaper(class_name: string) {
   return req(`/public/test-paper/suggest?class_name=${encodeURIComponent(class_name)}`);
 }
 
+export function generatePaperQuestions(payload: {
+  book_id: string;
+  chapter_ids: string[];
+  school_name: string;
+  class_name: string;
+  subject: string;
+  duration: string;
+  topic?: string;
+  difficulty?: string;
+  question_types?: Array<{ type: string; label: string; count: number; marks_per: number }>;
+}) {
+  return req("/public/test-paper/questions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function buildPaperPdf(data: any): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/public/test-paper/pdf`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "PDF build failed" }));
+    throw new Error(err.detail || "PDF build failed");
+  }
+  return res.blob();
+}
+
 export async function generateTestPaper(payload: {
   book_id: string;
   chapter_ids: string[];
