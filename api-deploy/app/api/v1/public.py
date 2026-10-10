@@ -13,7 +13,7 @@ from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db, async_session
-from app.models import User, Book, Chapter
+from app.models import User, Book, Chapter, GeneratedContent
 from app.api.v1.router import _process_queued_book
 from app.services import github_trigger, google_drive_service
 from app.services.test_paper_service import (
@@ -324,3 +324,84 @@ async def public_test_paper_pdf(req: dict = Body(...)):
 async def public_test_paper(req: dict = Body(...)):
     data = await _paper_data_from_request(req)
     return _pdf_response(data)
+
+
+# ── Saved papers (history) ──
+
+def _paper_summary(row: GeneratedContent) -> dict:
+    c = row.content or {}
+    qs = c.get("questions") or []
+    try:
+        marks = sum(int(q.get("marks", 0) or 0) for q in qs)
+    except (TypeError, ValueError):
+        marks = 0
+    return {
+        "id": row.id, "title": row.title, "created_at": row.created_at,
+        "class_name": c.get("class_name", ""), "subject": c.get("subject", ""),
+        "book_id": row.book_id, "questions": len(qs), "marks": marks,
+    }
+
+
+@router.post("/public/papers")
+async def public_save_paper(req: dict = Body(...)):
+    paper = req.get("paper") or {}
+    book_id = paper.get("book_id")
+    if not book_id:
+        raise HTTPException(status_code=400, detail="book_id is required")
+    title = (req.get("title") or paper.get("subject") or "Untitled paper").strip()
+    async with async_session() as db:
+        user = await _get_public_user(db)
+        row = GeneratedContent(user_id=user.id, book_id=book_id,
+                               content_type="test_paper", title=title[:400], content=paper)
+        db.add(row)
+        await db.commit()
+        return {"id": row.id}
+
+
+@router.put("/public/papers/{paper_id}")
+async def public_update_paper(paper_id: str, req: dict = Body(...)):
+    async with async_session() as db:
+        user = await _get_public_user(db)
+        row = await db.get(GeneratedContent, paper_id)
+        if not row or row.user_id != user.id or row.content_type != "test_paper":
+            raise HTTPException(status_code=404, detail="Paper not found")
+        if req.get("paper"):
+            row.content = req["paper"]
+        if req.get("title"):
+            row.title = req["title"][:400]
+        await db.commit()
+        return {"id": row.id}
+
+
+@router.get("/public/papers")
+async def public_list_papers():
+    async with async_session() as db:
+        user = await _get_public_user(db)
+        rows = (await db.execute(
+            select(GeneratedContent)
+            .where(GeneratedContent.user_id == user.id, GeneratedContent.content_type == "test_paper")
+            .order_by(GeneratedContent.created_at.desc())
+        )).scalars().all()
+        return [_paper_summary(r) for r in rows]
+
+
+@router.get("/public/papers/{paper_id}")
+async def public_get_paper(paper_id: str):
+    async with async_session() as db:
+        user = await _get_public_user(db)
+        row = await db.get(GeneratedContent, paper_id)
+        if not row or row.user_id != user.id or row.content_type != "test_paper":
+            raise HTTPException(status_code=404, detail="Paper not found")
+        return {"id": row.id, "title": row.title, "created_at": row.created_at, "paper": row.content}
+
+
+@router.delete("/public/papers/{paper_id}")
+async def public_delete_paper(paper_id: str):
+    async with async_session() as db:
+        user = await _get_public_user(db)
+        row = await db.get(GeneratedContent, paper_id)
+        if not row or row.user_id != user.id or row.content_type != "test_paper":
+            raise HTTPException(status_code=404, detail="Paper not found")
+        await db.delete(row)
+        await db.commit()
+        return {"deleted": paper_id}

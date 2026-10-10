@@ -162,6 +162,34 @@ export function suggestPaper(class_name: string) {
   return req(`/public/test-paper/suggest?class_name=${encodeURIComponent(class_name)}`);
 }
 
+export function listPapers() {
+  return req("/public/papers");
+}
+
+export function getPaper(id: string) {
+  return req(`/public/papers/${id}`);
+}
+
+export function deletePaper(id: string) {
+  return req(`/public/papers/${id}`, { method: "DELETE" });
+}
+
+export function savePaper(title: string, paper: any) {
+  return req("/public/papers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, paper }),
+  });
+}
+
+export function updatePaper(id: string, title: string, paper: any) {
+  return req(`/public/papers/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, paper }),
+  });
+}
+
 export function generatePaperQuestions(payload: {
   book_id: string;
   chapter_ids: string[];

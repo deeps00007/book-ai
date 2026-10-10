@@ -7,11 +7,12 @@ import { toast } from "sonner";
 import {
   Loader2, Upload, FileText, BookOpen, X, Trash2, Download,
   Layers, RefreshCw, GraduationCap, Plus, Wand2, ChevronUp, ChevronDown,
-  Sparkles, HelpCircle, Check, ClipboardList, Home,
+  Sparkles, HelpCircle, Check, ClipboardList, Home, History, Save, FolderOpen,
 } from "lucide-react";
 import {
   listBooks, getBook, uploadBook, deleteBook, processBook,
   generatePaperQuestions, buildPaperPdf, suggestPaper,
+  listPapers, getPaper, deletePaper, savePaper, updatePaper,
 } from "@/lib/api";
 import { Tour, type TourStep } from "@/components/Tour";
 
@@ -43,6 +44,16 @@ interface Q {
   marks: number;
   options?: Record<string, string>;
   answer?: string;
+}
+interface SavedItem {
+  id: string;
+  title: string;
+  created_at: string;
+  class_name: string;
+  subject: string;
+  book_id: string;
+  questions: number;
+  marks: number;
 }
 
 const FALLBACK_TYPES: QType[] = [
@@ -122,6 +133,9 @@ export default function AppPage() {
   const [generating, setGenerating] = useState(false);
   const [building, setBuilding] = useState(false);
   const [paper, setPaper] = useState<Q[] | null>(null);
+  const [paperBookId, setPaperBookId] = useState<string | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
+  const [savedPapers, setSavedPapers] = useState<SavedItem[]>([]);
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
   const [tourOpen, setTourOpen] = useState(false);
 
@@ -143,7 +157,11 @@ export default function AppPage() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const loadSaved = useCallback(async () => {
+    try { setSavedPapers(await listPapers()); } catch {}
+  }, []);
+
+  useEffect(() => { load(); loadSaved(); }, [load, loadSaved]);
 
   useEffect(() => {
     if (!books.some((b) => b.status !== "ready" && b.status !== "failed")) return;
@@ -197,6 +215,8 @@ export default function AppPage() {
     setAllChapters(true);
     setSubject(b.title);
     setPaper(null);
+    setSavedId(null);
+    setPaperBookId(b.id);
     const cls = classFromTitle(b.title) || "Class 8";
     setClassName(cls);
     setMode("auto");
@@ -299,6 +319,8 @@ export default function AppPage() {
         question_types: mode === "custom" ? questionTypes : undefined,
       });
       setPaper(data.questions || []);
+      setSavedId(null);
+      setPaperBookId(selected.id);
       toast.success(`Generated ${(data.questions || []).length} questions`);
       setTimeout(() => document.getElementById("editor")?.scrollIntoView({ behavior: "smooth" }), 100);
     } catch (e: any) {
@@ -332,17 +354,44 @@ export default function AppPage() {
   }
   const editableTypes = catalog.length ? catalog : FALLBACK_TYPES;
 
+  function buildPaperData() {
+    return {
+      book_id: paperBookId || selected?.id || "",
+      school_name: school,
+      class_name: className,
+      subject: subject || selected?.title || "",
+      duration,
+      questions: (paper || []).map((q, i) => ({ ...q, number: i + 1 })),
+    };
+  }
+
+  async function savePaperNow() {
+    if (!paper || paper.length === 0) return;
+    const data = buildPaperData();
+    if (!data.book_id) { toast.error("Missing book reference"); return; }
+    try {
+      if (savedId) await updatePaper(savedId, data.subject || "Untitled paper", data);
+      else { const r = await savePaper(data.subject || "Untitled paper", data); setSavedId(r.id); }
+      toast.success("Paper saved to history");
+      loadSaved();
+    } catch (e: any) {
+      toast.error(e.message || "Couldn't save");
+    }
+  }
+
   async function previewPdf() {
     if (!paper) return;
     setBuilding(true);
     try {
-      const data = {
-        school_name: school,
-        class_name: className,
-        subject: subject || selected?.title || "",
-        duration,
-        questions: paper.map((q, i) => ({ ...q, number: i + 1 })),
-      };
+      const data = buildPaperData();
+      // auto-save once so a downloaded paper is never lost
+      if (!savedId && data.book_id) {
+        try {
+          const r = await savePaper(data.subject || "Untitled paper", data);
+          setSavedId(r.id);
+          loadSaved();
+        } catch {}
+      }
       const blob = await buildPaperPdf(data);
       const url = URL.createObjectURL(blob);
       setPreview({ url, name: `Test_Paper_${(subject || "paper").replace(/\s+/g, "_")}.pdf` });
@@ -350,6 +399,47 @@ export default function AppPage() {
       toast.error(e.message || "PDF build failed");
     } finally {
       setBuilding(false);
+    }
+  }
+
+  async function openSaved(item: SavedItem) {
+    try {
+      const full = await getPaper(item.id);
+      const p = full.paper || {};
+      setSchool(p.school_name || "Examination");
+      setClassName(p.class_name || "");
+      setSubject(p.subject || "");
+      setDuration(p.duration || "1 Hour");
+      setPaperBookId(p.book_id || item.book_id || null);
+      setPaper((p.questions || []).map((q: Q) => ({ ...q })));
+      setSavedId(item.id);
+      toast.success("Paper loaded");
+      setTimeout(() => document.getElementById("editor")?.scrollIntoView({ behavior: "smooth" }), 100);
+    } catch {
+      toast.error("Couldn't open that paper");
+    }
+  }
+
+  async function downloadSaved(item: SavedItem) {
+    try {
+      const full = await getPaper(item.id);
+      const blob = await buildPaperPdf(full.paper);
+      const url = URL.createObjectURL(blob);
+      setPreview({ url, name: `${item.title.replace(/\s+/g, "_")}.pdf` });
+    } catch {
+      toast.error("Couldn't build that paper");
+    }
+  }
+
+  async function removeSaved(item: SavedItem) {
+    if (!confirm(`Delete saved paper "${item.title}"?`)) return;
+    try {
+      await deletePaper(item.id);
+      if (savedId === item.id) setSavedId(null);
+      toast.success("Deleted");
+      loadSaved();
+    } catch {
+      toast.error("Couldn't delete");
     }
   }
 
@@ -553,6 +643,45 @@ export default function AppPage() {
                     </button>
                   )}
                   <button onClick={() => handleDelete(b)} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg" title="Delete">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Section>
+
+        {/* Saved papers */}
+        <Section id="tour-saved" accent="teal" icon={<History className="w-5 h-5" />} title="Saved papers"
+          action={<button onClick={loadSaved} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg" title="Refresh"><RefreshCw className="w-4 h-4" /></button>}>
+          {savedPapers.length === 0 ? (
+            <div className="text-center py-8">
+              <History className="w-9 h-9 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500 text-sm">No saved papers yet</p>
+              <p className="text-xs text-gray-400">Papers are saved here automatically before you download them.</p>
+            </div>
+          ) : (
+            <div className="grid gap-3">
+              {savedPapers.map((s) => (
+                <div key={s.id} className="flex items-center gap-4 p-4 rounded-xl border border-gray-200 bg-white hover:border-teal-300 hover:shadow-sm transition-all">
+                  <div className="w-10 h-10 rounded-xl bg-teal-50 flex items-center justify-center shrink-0">
+                    <FileText className="w-5 h-5 text-teal-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate">{s.title}</p>
+                    <p className="text-xs text-gray-500">
+                      {[s.class_name, s.subject].filter(Boolean).join(" · ")} · {s.questions} Q · {s.marks} marks · {new Date(s.created_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <button onClick={() => openSaved(s)}
+                    className="text-xs px-3 py-1.5 bg-brand-50 text-brand-700 rounded-lg hover:bg-brand-100 font-medium flex items-center gap-1">
+                    <FolderOpen className="w-3.5 h-3.5" /> Open
+                  </button>
+                  <button onClick={() => downloadSaved(s)}
+                    className="text-xs px-3 py-1.5 bg-teal-50 text-teal-700 rounded-lg hover:bg-teal-100 font-medium flex items-center gap-1">
+                    <Download className="w-3.5 h-3.5" /> PDF
+                  </button>
+                  <button onClick={() => removeSaved(s)} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg" title="Delete">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
@@ -772,6 +901,10 @@ export default function AppPage() {
               <button onClick={handleGenerate}
                 className="px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium hover:bg-gray-50 flex items-center gap-1.5">
                 <RefreshCw className="w-4 h-4" /> Regenerate
+              </button>
+              <button onClick={savePaperNow} disabled={paper.length === 0}
+                className="px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1.5">
+                <Save className="w-4 h-4" /> {savedId ? "Saved" : "Save"}
               </button>
               <button onClick={previewPdf} disabled={building || paper.length === 0}
                 className="ml-auto px-5 py-2.5 bg-brand-600 text-white rounded-xl text-sm font-semibold hover:bg-brand-700 disabled:opacity-50 flex items-center gap-2 transition-colors">
