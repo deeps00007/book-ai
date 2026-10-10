@@ -62,6 +62,7 @@ export default function Home() {
   const [questionTypes, setQuestionTypes] = useState<QType[]>([]);
   const [addType, setAddType] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
 
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
@@ -203,16 +204,17 @@ export default function Home() {
         question_types: mode === "custom" ? questionTypes : undefined,
       });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Test_Paper_${(subject || "paper").replace(/\s+/g, "_")}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
+      setPreview({ url, name: `Test_Paper_${(subject || "paper").replace(/\s+/g, "_")}.pdf` });
     } catch (e: any) {
       alert(e.message || "Generation failed");
     } finally {
       setGenerating(false);
     }
+  }
+
+  function closePreview() {
+    if (preview) URL.revokeObjectURL(preview.url);
+    setPreview(null);
   }
 
   return (
@@ -487,6 +489,29 @@ export default function Home() {
             </>
           )}
         </section>
+      )}
+
+      {/* Preview modal */}
+      {preview && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-3xl h-[92vh] flex flex-col overflow-hidden shadow-xl">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+              <span className="font-semibold flex items-center gap-2">
+                <FileText className="w-4 h-4 text-brand-600" /> Preview
+              </span>
+              <div className="flex items-center gap-2">
+                <a href={preview.url} download={preview.name}
+                  className="px-3 py-1.5 bg-brand-600 text-white rounded-lg text-sm font-medium hover:bg-brand-700 flex items-center gap-1.5">
+                  <Download className="w-4 h-4" /> Download
+                </a>
+                <button onClick={closePreview} className="p-1.5 text-gray-500 hover:bg-gray-100 rounded-lg" title="Close">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <iframe src={preview.url} title="Test paper preview" className="flex-1 w-full bg-gray-100" />
+          </div>
+        </div>
       )}
     </div>
   );

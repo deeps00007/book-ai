@@ -229,8 +229,11 @@ async def generate_test_paper_questions(
 
 
 def build_test_paper_pdf(data: dict) -> bytes:
+    """Render a clean question paper (no answer-writing space — answers go on a
+    separate answer sheet)."""
     pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.set_auto_page_break(auto=True, margin=18)
+    pdf.set_margins(15, 15, 15)
     pdf.add_page()
 
     def s(text):
@@ -238,115 +241,95 @@ def build_test_paper_pdf(data: dict) -> bytes:
             text = text.decode("utf-8", errors="replace")
         return sanitize_text(str(text))
 
-    school = s(data["school_name"])
-    class_name = s(data["class_name"])
-    subject = s(data["subject"])
-    duration = s(data["duration"])
-    total_marks = data["total_marks"]
-    questions = data["questions"]
+    school = s(data.get("school_name") or "Examination")
+    class_name = s(data.get("class_name") or "")
+    subject = s(data.get("subject") or "")
+    duration = s(data.get("duration") or "")
+    total_marks = data.get("total_marks", 0)
+    questions = data.get("questions", [])
 
-    border_width = 0.8
-    margin_x = 15
-    content_w = 180
+    left, right = 15, 195
+    content_w = right - left  # 180
 
-    pdf.set_line_width(border_width)
-    pdf.rect(margin_x, 10, content_w, 27)
-
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.set_xy(0, 14)
-    pdf.cell(210, 7, school, align="C")
-
+    # ── Header box ──
+    pdf.set_line_width(0.6)
+    pdf.rect(left, 12, content_w, 26)
+    pdf.set_font("Helvetica", "B", 15)
+    pdf.set_xy(left, 15)
+    pdf.cell(content_w, 7, school, align="C")
     pdf.set_font("Helvetica", "B", 11)
-    pdf.set_xy(0, 22)
-    pdf.cell(210, 7, f"{class_name} | {subject}", align="C")
-
+    pdf.set_xy(left, 22.5)
+    pdf.cell(content_w, 6, "  |  ".join(x for x in [class_name, subject] if x), align="C")
     pdf.set_font("Helvetica", "", 9)
-    pdf.set_xy(0, 30)
-    pdf.cell(210, 5, f"Duration: {duration} | Maximum Marks: {total_marks}", align="C")
+    pdf.set_xy(left, 30)
+    pdf.cell(content_w, 5, f"Time: {duration}          Maximum Marks: {total_marks}", align="C")
 
-    pdf.ln(15)
+    pdf.set_y(44)
+    pdf.set_line_width(0.3)
+    pdf.line(left, pdf.get_y(), right, pdf.get_y())
+    pdf.ln(3)
 
-    pdf.set_line_width(0.4)
-    pdf.line(margin_x, pdf.get_y(), margin_x + content_w, pdf.get_y())
-    pdf.ln(4)
-
+    # ── General instructions ──
     pdf.set_font("Helvetica", "B", 9)
-    pdf.cell(0, 6, "GENERAL INSTRUCTIONS:", ln=True)
+    pdf.set_x(left)
+    pdf.cell(0, 5, "General Instructions:", ln=True)
     pdf.set_font("Helvetica", "", 9)
-    instructions = [
-        "1. This question paper contains questions of different types.",
-        "2. All questions are compulsory.",
-        "3. Read each question carefully before answering.",
-        f"4. Maximum marks: {total_marks}",
-    ]
-    for inst in instructions:
-        pdf.cell(0, 5, inst, ln=True)
+    for inst in [
+        "1. All questions are compulsory.",
+        "2. Read each question carefully before answering.",
+        "3. Write your answers neatly on the answer sheet provided.",
+        f"4. This paper carries a maximum of {total_marks} marks.",
+    ]:
+        pdf.set_x(left)
+        pdf.multi_cell(content_w, 5, inst)
 
-    pdf.ln(4)
-    pdf.set_font("Helvetica", "B", 9)
-    pdf.cell(0, 6, "QUESTION STRUCTURE:", ln=True)
-    pdf.set_font("Helvetica", "", 9)
-    for qt in data["question_types"]:
-        pdf.cell(0, 5, f"  {qt['label']}: {qt['count']} x {qt['marks_per']} = {qt['count'] * qt['marks_per']} marks", ln=True)
+    pdf.ln(2)
+    pdf.set_line_width(0.3)
+    pdf.line(left, pdf.get_y(), right, pdf.get_y())
+    pdf.ln(5)
 
-    pdf.ln(4)
-    pdf.set_line_width(0.4)
-    pdf.line(margin_x, pdf.get_y(), margin_x + content_w, pdf.get_y())
-    pdf.ln(6)
-
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.cell(0, 8, "QUESTIONS", align="C", ln=True)
-    pdf.ln(4)
-
+    # ── Questions ──
+    num_w = 9
     for i, q in enumerate(questions):
-        if pdf.get_y() > 250:
-            pdf.add_page()
-
         q_num = q.get("number", i + 1)
         q_type = q.get("type", "")
         marks = q.get("marks", 1)
-        question_text = s(q.get("question", ""))
-        question_text = wrap_text(question_text, max_chars=95)
+        question_text = s(q.get("question", "")) or "(question)"
 
+        if pdf.get_y() > 250:
+            pdf.add_page()
+
+        y0 = pdf.get_y()
+        # hanging indent: number, then wrapped question text aligned after it
+        pdf.set_x(left)
         pdf.set_font("Helvetica", "B", 10)
-        prefix = f"{q_num}. [{marks}]  "
-        pdf.set_x(margin_x)
-        pdf.cell(content_w, 6, prefix, ln=True)
-
-        pdf.set_x(margin_x + 10)
+        pdf.cell(num_w, 5.5, f"{q_num}.")
         pdf.set_font("Helvetica", "", 10)
-        for line in question_text.split("\n"):
-            pdf.cell(content_w - 10, 6, line, ln=True)
+        pdf.set_x(left + num_w)
+        pdf.multi_cell(content_w - num_w - 15, 5.5, question_text)
+        y_after = pdf.get_y()
 
-        pdf.ln(1)
+        # marks right-aligned on the first line
+        pdf.set_xy(right - 14, y0)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.cell(14, 5.5, f"[{marks}]", align="R")
+        pdf.set_y(y_after)
 
+        # options for MCQ / assertion-reason
         if q_type in ("mcq", "assertion_reason") and q.get("options"):
             pdf.set_font("Helvetica", "", 10)
             for opt_key in ["A", "B", "C", "D"]:
                 opt_text = s(q["options"].get(opt_key, ""))
-                if opt_text:
-                    wrapped = wrap_text(f"({opt_key}) {opt_text}", max_chars=85)
-                    for line in wrapped.split("\n"):
-                        pdf.set_x(margin_x + 15)
-                        pdf.cell(content_w - 15, 6, line, ln=True)
-
-        line_count = {
-            "very_short": 1,
-            "short_answer": 3,
-            "long_answer": 5,
-            "case_study": 5,
-            "answer": 5,
-        }.get(q_type, 0)
-        for _ in range(line_count):
-            pdf.set_draw_color(180, 180, 180)
-            pdf.set_line_width(0.2)
-            pdf.line(margin_x + 15, pdf.get_y() + 3, margin_x + content_w, pdf.get_y() + 3)
-            pdf.ln(6)
+                if not opt_text:
+                    continue
+                pdf.set_x(left + num_w)
+                pdf.multi_cell(content_w - num_w - 15, 5.5, f"({opt_key}) {opt_text}")
 
         pdf.ln(3)
 
-    pdf.set_line_width(0.4)
-    pdf.line(margin_x, pdf.get_y() + 2, margin_x + content_w, pdf.get_y() + 2)
+    # ── Footer ──
+    pdf.set_line_width(0.3)
+    pdf.line(left, pdf.get_y() + 2, right, pdf.get_y() + 2)
     pdf.ln(4)
     pdf.set_font("Helvetica", "I", 8)
     pdf.cell(0, 6, "--- End of Question Paper ---", align="C")
